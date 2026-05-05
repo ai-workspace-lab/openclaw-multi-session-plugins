@@ -1,6 +1,6 @@
 {
   "name": "xworkmate-artifacts",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "XWorkmate artifact export plugin for OpenClaw Gateway",
   "type": "module",
   "license": "MIT",
