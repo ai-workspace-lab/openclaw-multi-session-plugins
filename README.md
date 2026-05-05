@@ -1,4 +1,4 @@
-# openclaw-xworkmate-artifacts
+# xworkmate-artifacts
 
 OpenClaw Gateway plugin that exports structured workspace artifact manifests for XWorkmate.
 
@@ -15,8 +15,8 @@ The method scans the resolved OpenClaw workspace after a run finishes and return
 Link this directory into OpenClaw:
 
 ```bash
-openclaw plugins install --link /Users/shenlan/workspaces/cloud-neutral-toolkit/openclaw-xworkmate-artifacts
-openclaw plugins enable openclaw-xworkmate-artifacts
+openclaw plugins install --link /Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-artifacts
+openclaw plugins enable xworkmate-artifacts
 ```
 
 Equivalent config shape:
@@ -26,11 +26,11 @@ Equivalent config shape:
   "plugins": {
     "load": {
       "paths": [
-        "/Users/shenlan/workspaces/cloud-neutral-toolkit/openclaw-xworkmate-artifacts"
+        "/Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-artifacts"
       ]
     },
     "entries": {
-      "openclaw-xworkmate-artifacts": {
+      "xworkmate-artifacts": {
         "enabled": true
       }
     }

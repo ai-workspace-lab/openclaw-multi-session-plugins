@@ -1,7 +1,7 @@
 {
-  "name": "openclaw-xworkmate-artifacts",
+  "name": "xworkmate-artifacts",
   "version": "0.1.0",
-  "description": "OpenClaw Gateway artifact export plugin for XWorkmate",
+  "description": "XWorkmate artifact export plugin for OpenClaw Gateway",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -11,13 +11,13 @@
     "gateway",
     "plugin"
   ],
-  "homepage": "https://github.com/x-evor/openclaw-xworkmate-artifacts#readme",
+  "homepage": "https://github.com/x-evor/xworkmate-artifacts#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/x-evor/openclaw-xworkmate-artifacts.git"
+    "url": "git+https://github.com/x-evor/xworkmate-artifacts.git"
   },
   "bugs": {
-    "url": "https://github.com/x-evor/openclaw-xworkmate-artifacts/issues"
+    "url": "https://github.com/x-evor/xworkmate-artifacts/issues"
   },
   "engines": {
     "node": ">=22"

@@ -1,5 +1,5 @@
 {
-  "id": "openclaw-xworkmate-artifacts",
+  "id": "xworkmate-artifacts",
   "name": "XWorkmate Artifacts",
   "description": "Exports structured artifact manifests from the OpenClaw workspace for XWorkmate.",
   "configSchema": {
