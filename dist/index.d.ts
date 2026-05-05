@@ -1,2 +1,9 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-export default function register(api: OpenClawPluginApi): void;
+declare const plugin: {
+    id: string;
+    name: string;
+    description: string;
+    register: typeof register;
+};
+export default plugin;
+declare function register(api: OpenClawPluginApi): void;

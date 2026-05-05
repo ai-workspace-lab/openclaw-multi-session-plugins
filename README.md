@@ -10,10 +10,12 @@ XWorkmate talks to OpenClaw through `xworkmate-bridge` using the existing
 can then sync generated files into its local thread workspace without changing
 the UI or adding provider-specific routes.
 
-It registers one Gateway method:
+It registers three Gateway methods:
 
 ```text
 xworkmate.artifacts.export
+xworkmate.artifacts.list
+xworkmate.artifacts.read
 ```
 
 The method scans the resolved OpenClaw workspace after a run finishes and returns safe, relative artifact entries that XWorkmate Bridge can normalize into the APP `artifacts[]` contract.
@@ -90,6 +92,41 @@ Response payload:
 ```
 
 Files at or below `maxInlineBytes` also include `encoding: "base64"` and `content`.
+
+## View And Download
+
+After installation, enable the optional agent tool if you want OpenClaw chat to
+show a quick artifact table:
+
+```json5
+{
+  "agents": {
+    "list": [
+      {
+        "id": "main",
+        "tools": {
+          "allow": ["xworkmate_artifacts"]
+        }
+      }
+    ]
+  }
+}
+```
+
+Then ask OpenClaw to list artifacts in the current workspace. The tool returns a
+Markdown table with the workspace path, relative file paths, content types, file
+sizes, and hash prefixes. Files are still stored in the OpenClaw workspace, so
+local users can open or download them directly from that workspace path.
+
+Gateway clients can use:
+
+- `xworkmate.artifacts.list` for a metadata-only manifest and Markdown table.
+- `xworkmate.artifacts.read` with `relativePath` for one inline base64 file.
+- `xworkmate.artifacts.export` after `agent.wait` for the XWorkmate APP sync path.
+
+Large files are intentionally metadata-only in v1. XWorkmate Bridge can add a
+hosted artifact cache/download endpoint later if remote APP clients need direct
+links for large PPT/PDF/DOCX files.
 
 ## Limits
 

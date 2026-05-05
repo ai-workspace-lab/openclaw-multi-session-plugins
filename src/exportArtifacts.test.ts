@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { exportXWorkmateArtifacts } from "./exportArtifacts.js";
+import { exportXWorkmateArtifacts, readXWorkmateArtifact } from "./exportArtifacts.js";
 
 describe("exportXWorkmateArtifacts", () => {
   it("exports changed files with metadata and base64 content", async () => {
@@ -34,6 +34,8 @@ describe("exportXWorkmateArtifacts", () => {
       encoding: "base64",
       content: Buffer.from("# Done\n").toString("base64"),
     });
+    expect(result.manifestMarkdown).toContain("reports/final.md");
+    expect(result.manifestMarkdown).toContain("text/markdown");
   });
 
   it("filters old files by sinceUnixMs", async () => {
@@ -92,6 +94,25 @@ describe("exportXWorkmateArtifacts", () => {
     expect(result.warnings).toContain("large.pdf exceeds maxInlineBytes and was not inlined");
   });
 
+  it("can list artifacts without inline content", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-xworkmate-artifacts-"));
+    await fs.writeFile(path.join(root, "small.txt"), "small");
+
+    const result = await exportXWorkmateArtifacts({
+      params: {
+        sessionKey: "thread-main",
+        runId: "run-1",
+        maxInlineBytes: 0,
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+
+    expect(result.artifacts[0]?.relativePath).toBe("small.txt");
+    expect(result.artifacts[0]?.encoding).toBeUndefined();
+    expect(result.artifacts[0]?.content).toBeUndefined();
+    expect(result.warnings).toContain("small.txt exceeds maxInlineBytes and was not inlined");
+  });
+
   it("limits exported files", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-xworkmate-artifacts-"));
     await fs.writeFile(path.join(root, "a.txt"), "a");
@@ -130,5 +151,43 @@ describe("exportXWorkmateArtifacts", () => {
     });
 
     expect(result.artifacts.map((entry) => entry.relativePath)).toEqual(["agent.txt"]);
+  });
+
+  it("reads one artifact by relative path", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-xworkmate-artifacts-"));
+    await fs.mkdir(path.join(root, "reports"), { recursive: true });
+    await fs.writeFile(path.join(root, "reports", "final.txt"), "final");
+
+    const result = await readXWorkmateArtifact({
+      params: {
+        sessionKey: "thread-main",
+        runId: "run-1",
+        relativePath: "reports/final.txt",
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+
+    expect(result.artifacts).toHaveLength(1);
+    expect(result.artifacts[0]).toMatchObject({
+      relativePath: "reports/final.txt",
+      contentType: "text/plain",
+      encoding: "base64",
+      content: Buffer.from("final").toString("base64"),
+    });
+  });
+
+  it("rejects relative path traversal when reading artifacts", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-xworkmate-artifacts-"));
+
+    await expect(
+      readXWorkmateArtifact({
+        params: {
+          sessionKey: "thread-main",
+          runId: "run-1",
+          relativePath: "../outside.txt",
+        },
+        pluginConfig: { workspaceDir: root },
+      }),
+    ).rejects.toThrow("relativePath must stay inside the workspace");
   });
 });

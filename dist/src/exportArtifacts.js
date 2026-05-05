@@ -27,8 +27,9 @@ export async function exportXWorkmateArtifacts(input) {
         throw new Error("sessionKey required");
     }
     const maxFiles = positiveInteger(params.maxFiles, pluginConfig.maxFiles, DEFAULT_MAX_FILES);
-    const maxInlineBytes = positiveInteger(params.maxInlineBytes, pluginConfig.maxInlineBytes, DEFAULT_MAX_INLINE_BYTES);
+    const maxInlineBytes = nonNegativeInteger(params.maxInlineBytes, pluginConfig.maxInlineBytes, DEFAULT_MAX_INLINE_BYTES);
     const sinceUnixMs = nonNegativeNumber(params.sinceUnixMs, 0);
+    const includeContent = optionalBoolean(params.includeContent, true);
     const workspaceDir = resolveWorkspaceDir({
         config: input.config,
         pluginConfig,
@@ -62,16 +63,16 @@ export async function exportXWorkmateArtifacts(input) {
             sizeBytes: bytes.byteLength,
             sha256: createHash("sha256").update(bytes).digest("hex"),
         };
-        if (bytes.byteLength <= maxInlineBytes) {
+        if (includeContent && bytes.byteLength <= maxInlineBytes) {
             artifact.encoding = "base64";
             artifact.content = bytes.toString("base64");
         }
-        else {
+        else if (includeContent) {
             warnings.push(`${candidate.relativePath} exceeds maxInlineBytes and was not inlined`);
         }
         artifacts.push(artifact);
     }
-    return {
+    const result = {
         runId,
         sessionKey,
         remoteWorkingDirectory: workspaceRoot,
@@ -79,6 +80,96 @@ export async function exportXWorkmateArtifacts(input) {
         artifacts,
         warnings,
     };
+    return {
+        ...result,
+        manifestMarkdown: formatArtifactManifestMarkdown(result),
+    };
+}
+export async function readXWorkmateArtifact(input) {
+    const params = input.params ?? {};
+    const pluginConfig = input.pluginConfig ?? {};
+    const runId = optionalString(params.runId) || "read";
+    const sessionKey = optionalString(params.sessionKey);
+    if (!sessionKey) {
+        throw new Error("sessionKey required");
+    }
+    const relativePath = optionalString(params.relativePath);
+    if (!relativePath) {
+        throw new Error("relativePath required");
+    }
+    if (relativePath.split(/[\\/]/).some((part) => part === ".." || part === "")) {
+        throw new Error("relativePath must stay inside the workspace");
+    }
+    const maxInlineBytes = nonNegativeInteger(params.maxInlineBytes, pluginConfig.maxInlineBytes, DEFAULT_MAX_INLINE_BYTES);
+    const workspaceDir = resolveWorkspaceDir({
+        config: input.config,
+        pluginConfig,
+        params,
+        sessionKey,
+    });
+    const workspaceRoot = await fs.realpath(workspaceDir);
+    const absolutePath = path.join(workspaceRoot, relativePath.split("/").join(path.sep));
+    const realPath = await fs.realpath(absolutePath);
+    if (!isWithinRoot(workspaceRoot, realPath)) {
+        throw new Error("relativePath must stay inside the workspace");
+    }
+    const stat = await fs.stat(realPath);
+    if (!stat.isFile()) {
+        throw new Error("relativePath must point to a file");
+    }
+    const bytes = await fs.readFile(realPath);
+    const artifact = {
+        relativePath: safeRelativePath(workspaceRoot, realPath),
+        label: path.posix.basename(relativePath),
+        contentType: contentTypeForPath(relativePath),
+        sizeBytes: bytes.byteLength,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+    };
+    const warnings = [];
+    if (bytes.byteLength <= maxInlineBytes) {
+        artifact.encoding = "base64";
+        artifact.content = bytes.toString("base64");
+    }
+    else {
+        warnings.push(`${artifact.relativePath} exceeds maxInlineBytes and was not inlined`);
+    }
+    const result = {
+        runId,
+        sessionKey,
+        remoteWorkingDirectory: workspaceRoot,
+        remoteWorkspaceRefKind: "remotePath",
+        artifacts: [artifact],
+        warnings,
+    };
+    return {
+        ...result,
+        manifestMarkdown: formatArtifactManifestMarkdown(result),
+    };
+}
+export function formatArtifactManifestMarkdown(input) {
+    const lines = [
+        "## XWorkmate artifacts",
+        "",
+        `Workspace: \`${input.remoteWorkingDirectory}\``,
+        "",
+    ];
+    if (input.artifacts.length === 0) {
+        lines.push("No artifacts found.");
+    }
+    else {
+        lines.push("| File | Type | Size | SHA-256 | Inline |");
+        lines.push("| --- | --- | ---: | --- | --- |");
+        for (const artifact of input.artifacts) {
+            lines.push(`| \`${escapeMarkdownCell(artifact.relativePath)}\` | ${escapeMarkdownCell(artifact.contentType)} | ${formatBytes(artifact.sizeBytes)} | \`${artifact.sha256.slice(0, 12)}\` | ${artifact.encoding === "base64" ? "yes" : "no"} |`);
+        }
+    }
+    if (input.warnings.length > 0) {
+        lines.push("", "Warnings:");
+        for (const warning of input.warnings) {
+            lines.push(`- ${warning}`);
+        }
+    }
+    return lines.join("\n");
 }
 async function collectCandidates(input) {
     const candidates = [];
@@ -234,10 +325,25 @@ function objectRecord(value) {
 function optionalString(value) {
     return typeof value === "string" ? value.trim() : "";
 }
+function optionalBoolean(value, fallback) {
+    if (typeof value === "boolean") {
+        return value;
+    }
+    return fallback;
+}
 function positiveInteger(primary, secondary, fallback) {
     for (const value of [primary, secondary]) {
         const numeric = Number(value);
         if (Number.isFinite(numeric) && numeric > 0) {
+            return Math.floor(numeric);
+        }
+    }
+    return fallback;
+}
+function nonNegativeInteger(primary, secondary, fallback) {
+    for (const value of [primary, secondary]) {
+        const numeric = Number(value);
+        if (Number.isFinite(numeric) && numeric >= 0) {
             return Math.floor(numeric);
         }
     }
@@ -258,4 +364,18 @@ function expandUserPath(value) {
         return path.join(os.homedir(), value.slice(2));
     }
     return path.resolve(value);
+}
+function formatBytes(sizeBytes) {
+    if (sizeBytes < 1024) {
+        return `${sizeBytes} B`;
+    }
+    const kib = sizeBytes / 1024;
+    if (kib < 1024) {
+        return `${Math.round(kib)} KB`;
+    }
+    const mib = kib / 1024;
+    return `${mib.toFixed(mib >= 10 ? 0 : 1)} MB`;
+}
+function escapeMarkdownCell(value) {
+    return value.replaceAll("|", "\\|");
 }
