@@ -1,14 +1,16 @@
-import type { GatewayRequestHandler, OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import register from "./index.js";
 
+type GatewayMethodHandler = Parameters<OpenClawPluginApi["registerGatewayMethod"]>[1];
+
 describe("plugin registration", () => {
   it("registers the xworkmate artifact export gateway method", () => {
-    const methods: Array<{ method: string; handler: GatewayRequestHandler }> = [];
+    const methods: Array<{ method: string; handler: GatewayMethodHandler }> = [];
     const api = {
       config: {},
       pluginConfig: {},
-      registerGatewayMethod: (method: string, handler: GatewayRequestHandler) => {
+      registerGatewayMethod: (method: string, handler: GatewayMethodHandler) => {
         methods.push({ method, handler });
       },
     } as unknown as OpenClawPluginApi;
