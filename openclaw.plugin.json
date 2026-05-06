@@ -5,6 +5,9 @@
   "activation": {
     "onStartup": true
   },
+  "contracts": {
+    "tools": ["xworkmate_artifacts"]
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -20,6 +23,10 @@
       "maxInlineBytes": {
         "type": "number",
         "description": "Default maximum file size to inline as base64."
+      },
+      "artifactRefSigningSecret": {
+        "type": "string",
+        "description": "Optional stable secret used to sign artifactRef values. Defaults to an in-process secret."
       }
     }
   },
@@ -35,6 +42,11 @@
     "maxInlineBytes": {
       "label": "Max Inline Bytes",
       "help": "Upper bound for base64 inline artifact content. Default: 10485760."
+    },
+    "artifactRefSigningSecret": {
+      "label": "Artifact Ref Signing Secret",
+      "help": "Optional stable secret for plugin artifact references. Leave blank for process-local refs.",
+      "sensitive": true
     }
   }
 }

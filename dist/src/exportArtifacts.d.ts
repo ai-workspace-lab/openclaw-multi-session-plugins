@@ -4,6 +4,7 @@ export type XWorkmateArtifact = {
     contentType: string;
     sizeBytes: number;
     sha256: string;
+    artifactRef: string;
     artifactScope?: string;
     scopeKind?: XWorkmateArtifactScopeKind;
     encoding?: "base64";

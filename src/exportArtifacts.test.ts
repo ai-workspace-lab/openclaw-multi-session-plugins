@@ -22,8 +22,8 @@ describe("exportXWorkmateArtifacts", () => {
       pluginConfig: { workspaceDir: root },
     });
 
-    expect(first.artifactScope).toMatch(/^\.xworkmate\/artifacts\/tasks\/thread-main-[a-f0-9]{12}\/turn-1-[a-f0-9]{12}$/);
-    expect(second.artifactScope).toMatch(/^\.xworkmate\/artifacts\/tasks\/thread-main-[a-f0-9]{12}\/turn-2-[a-f0-9]{12}$/);
+    expect(first.artifactScope).toMatch(/^tasks\/thread-main-[a-f0-9]{12}\/turn-1-[a-f0-9]{12}$/);
+    expect(second.artifactScope).toMatch(/^tasks\/thread-main-[a-f0-9]{12}\/turn-2-[a-f0-9]{12}$/);
     expect(first.artifactScope).not.toBe(second.artifactScope);
     expect((await fs.stat(first.artifactDirectory)).isDirectory()).toBe(true);
     expect(first.remoteWorkingDirectory).toBe(await fs.realpath(root));
@@ -58,6 +58,7 @@ describe("exportXWorkmateArtifacts", () => {
       encoding: "base64",
       content: Buffer.from("# Done\n").toString("base64"),
     });
+    expect(result.artifacts[0]?.artifactRef).toContain(".");
     expect(result.manifestMarkdown).toContain("reports/final.md");
     expect(result.manifestMarkdown).toContain("text/markdown");
   });
@@ -140,7 +141,12 @@ describe("exportXWorkmateArtifacts", () => {
       params: { sessionKey: "thread-main", runId: "turn-1" },
       pluginConfig: { workspaceDir: root },
     });
+    const otherTask = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "turn-2" },
+      pluginConfig: { workspaceDir: root },
+    });
     await fs.writeFile(path.join(root, "existing.pdf"), "pdf");
+    await fs.writeFile(path.join(otherTask.artifactDirectory, "other-task.txt"), "other");
     await fs.mkdir(path.join(root, ".xworkmate", "metadata"), { recursive: true });
     await fs.writeFile(path.join(root, ".xworkmate", "metadata", "internal.json"), "{}");
     const stat = await fs.stat(path.join(root, "existing.pdf"));
@@ -161,6 +167,7 @@ describe("exportXWorkmateArtifacts", () => {
     expect(result.artifacts.map((entry) => entry.relativePath)).toEqual(["existing.pdf"]);
     expect(result.artifacts[0]?.artifactScope).toBeUndefined();
     expect(result.artifacts[0]?.scopeKind).toBe("workspace-latest");
+    expect(result.artifacts[0]?.artifactRef).toContain(".");
     expect(result.warnings).toContain("scoped artifact directory is empty; exported latest workspace files instead");
   });
 
@@ -242,27 +249,21 @@ describe("exportXWorkmateArtifacts", () => {
     expect(result.artifacts.map((entry) => entry.relativePath)).toEqual(["agent.txt"]);
   });
 
-  it("reads one artifact by relative path", async () => {
+  it("rejects unscoped artifact reads by relative path", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-xworkmate-artifacts-"));
     await fs.mkdir(path.join(root, "reports"), { recursive: true });
     await fs.writeFile(path.join(root, "reports", "final.txt"), "final");
 
-    const result = await readXWorkmateArtifact({
-      params: {
-        sessionKey: "thread-main",
-        runId: "run-1",
-        relativePath: "reports/final.txt",
-      },
-      pluginConfig: { workspaceDir: root },
-    });
-
-    expect(result.artifacts).toHaveLength(1);
-    expect(result.artifacts[0]).toMatchObject({
-      relativePath: "reports/final.txt",
-      contentType: "text/plain",
-      encoding: "base64",
-      content: Buffer.from("final").toString("base64"),
-    });
+    await expect(
+      readXWorkmateArtifact({
+        params: {
+          sessionKey: "thread-main",
+          runId: "run-1",
+          relativePath: "reports/final.txt",
+        },
+        pluginConfig: { workspaceDir: root },
+      }),
+    ).rejects.toThrow("artifactScope or artifactRef required");
   });
 
   it("reads one artifact inside a task artifact scope", async () => {
@@ -293,16 +294,85 @@ describe("exportXWorkmateArtifacts", () => {
       encoding: "base64",
       content: Buffer.from("final").toString("base64"),
     });
+    expect(result.artifacts[0]?.artifactRef).toContain(".");
+  });
+
+  it("reads a latest workspace artifact only through its artifactRef", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-xworkmate-artifacts-"));
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "turn-1" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.writeFile(path.join(root, "existing.txt"), "existing");
+
+    const exported = await exportXWorkmateArtifacts({
+      params: {
+        sessionKey: "thread-main",
+        runId: "turn-1",
+        artifactScope: prepared.artifactScope,
+        sinceUnixMs: Date.now() + 10_000,
+        latestIfEmpty: true,
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+
+    const result = await readXWorkmateArtifact({
+      params: {
+        sessionKey: "thread-main",
+        runId: "turn-1",
+        artifactRef: exported.artifacts[0]?.artifactRef,
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+
+    expect(result.scopeKind).toBe("workspace-latest");
+    expect(result.artifactScope).toBeUndefined();
+    expect(result.artifacts[0]).toMatchObject({
+      relativePath: "existing.txt",
+      scopeKind: "workspace-latest",
+      encoding: "base64",
+      content: Buffer.from("existing").toString("base64"),
+    });
+  });
+
+  it("rejects tampered artifact refs", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-xworkmate-artifacts-"));
+    await fs.writeFile(path.join(root, "existing.txt"), "existing");
+    const exported = await exportXWorkmateArtifacts({
+      params: {
+        sessionKey: "thread-main",
+        runId: "run-1",
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+    const artifactRef = exported.artifacts[0]?.artifactRef ?? "";
+    const tampered = `${artifactRef}x`;
+
+    await expect(
+      readXWorkmateArtifact({
+        params: {
+          sessionKey: "thread-main",
+          runId: "run-1",
+          artifactRef: tampered,
+        },
+        pluginConfig: { workspaceDir: root },
+      }),
+    ).rejects.toThrow("invalid artifactRef");
   });
 
   it("reads artifact metadata without inline content when the file exceeds the limit", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-xworkmate-artifacts-"));
-    await fs.writeFile(path.join(root, "large.bin"), Buffer.from("large-content"));
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "turn-1" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.writeFile(path.join(prepared.artifactDirectory, "large.bin"), Buffer.from("large-content"));
 
     const result = await readXWorkmateArtifact({
       params: {
         sessionKey: "thread-main",
         runId: "run-1",
+        artifactScope: prepared.artifactScope,
         relativePath: "large.bin",
         maxInlineBytes: 2,
       },
@@ -323,12 +393,17 @@ describe("exportXWorkmateArtifacts", () => {
 
   it("rejects relative path traversal when reading artifacts", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-xworkmate-artifacts-"));
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "turn-1" },
+      pluginConfig: { workspaceDir: root },
+    });
 
     await expect(
       readXWorkmateArtifact({
         params: {
           sessionKey: "thread-main",
           runId: "run-1",
+          artifactScope: prepared.artifactScope,
           relativePath: "../outside.txt",
         },
         pluginConfig: { workspaceDir: root },
@@ -357,13 +432,18 @@ describe("exportXWorkmateArtifacts", () => {
     const outsideRoot = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-xworkmate-outside-"));
     const outsideFile = path.join(outsideRoot, "secret.txt");
     await fs.writeFile(outsideFile, "secret");
-    await fs.symlink(outsideFile, path.join(root, "linked-secret.txt"));
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "turn-1" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.symlink(outsideFile, path.join(prepared.artifactDirectory, "linked-secret.txt"));
 
     await expect(
       readXWorkmateArtifact({
         params: {
           sessionKey: "thread-main",
           runId: "run-1",
+          artifactScope: prepared.artifactScope,
           relativePath: "linked-secret.txt",
         },
         pluginConfig: { workspaceDir: root },

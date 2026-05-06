@@ -92,7 +92,15 @@ function createXWorkmateArtifactsTool(api, ctx) {
                 },
                 relativePath: {
                     type: "string",
-                    description: "Artifact path relative to the workspace. Required for action=read.",
+                    description: "Artifact path relative to artifactScope. Required for action=read without artifactRef.",
+                },
+                artifactScope: {
+                    type: "string",
+                    description: "Task artifact scope returned by prepare/export, for example tasks/<session>/<run>.",
+                },
+                artifactRef: {
+                    type: "string",
+                    description: "Plugin-signed artifact reference returned by export/list. Required for workspace-latest reads.",
                 },
                 sinceUnixMs: {
                     type: "number",
