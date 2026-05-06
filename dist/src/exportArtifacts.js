@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 const DEFAULT_MAX_FILES = 64;
 const DEFAULT_MAX_INLINE_BYTES = 10 * 1024 * 1024;
-const TASK_SCOPE_ROOT = "tasks";
+const TASK_SCOPE_ROOT = ".xworkmate/artifacts/tasks";
 const GENERATED_ARTIFACT_REF_SECRET = randomBytes(32).toString("hex");
 const SKIPPED_DIRS = new Set([
     ".git",
@@ -360,7 +360,9 @@ function optionalArtifactScope(value) {
 function safeTaskArtifactScope(value) {
     const scope = safeInputRelativePath(value, "artifactScope");
     const parts = scope.split("/");
-    if (parts.length !== 3 || parts[0] !== TASK_SCOPE_ROOT) {
+    const rootParts = TASK_SCOPE_ROOT.split("/");
+    const scopeRoot = parts.slice(0, rootParts.length).join("/");
+    if (parts.length !== rootParts.length + 2 || scopeRoot !== TASK_SCOPE_ROOT) {
         throw new Error("artifactScope must be a task artifact scope");
     }
     return scope;

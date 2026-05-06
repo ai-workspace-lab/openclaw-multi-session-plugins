@@ -19,7 +19,7 @@ xworkmate.artifacts.list
 xworkmate.artifacts.read
 ```
 
-`prepare` creates a per-task artifact scope under `tasks/` in the resolved OpenClaw workspace. `export`
+`prepare` creates a per-task artifact scope under `.xworkmate/artifacts/tasks/` in the resolved OpenClaw workspace. `export`
 and `read` then return safe, relative artifact entries that XWorkmate Bridge can normalize
 into the APP `artifacts[]` contract.
 
@@ -78,10 +78,10 @@ Prepare response payload:
   "sessionKey": "thread-main",
   "remoteWorkingDirectory": "/home/user/.openclaw/workspace",
   "remoteWorkspaceRefKind": "remotePath",
-  "artifactScope": "tasks/thread-main-.../turn-1-...",
+  "artifactScope": ".xworkmate/artifacts/tasks/thread-main-.../turn-1-...",
   "scopeKind": "task",
-  "artifactDirectory": "/home/user/.openclaw/workspace/tasks/thread-main-.../turn-1-...",
-  "relativeArtifactDirectory": "tasks/thread-main-.../turn-1-...",
+  "artifactDirectory": "/home/user/.openclaw/workspace/.xworkmate/artifacts/tasks/thread-main-.../turn-1-...",
+  "relativeArtifactDirectory": ".xworkmate/artifacts/tasks/thread-main-.../turn-1-...",
   "warnings": []
 }
 ```
@@ -92,7 +92,7 @@ Export request params:
 {
   "sessionKey": "thread-main",
   "runId": "turn-1",
-  "artifactScope": "tasks/thread-main-.../turn-1-...",
+  "artifactScope": ".xworkmate/artifacts/tasks/thread-main-.../turn-1-...",
   "sinceUnixMs": 1770000000000,
   "latestIfEmpty": true,
   "maxFiles": 64,
@@ -108,7 +108,7 @@ Export response payload:
   "sessionKey": "thread-main",
   "remoteWorkingDirectory": "/home/user/.openclaw/workspace",
   "remoteWorkspaceRefKind": "remotePath",
-  "artifactScope": "tasks/thread-main-.../turn-1-...",
+  "artifactScope": ".xworkmate/artifacts/tasks/thread-main-.../turn-1-...",
   "scopeKind": "task",
   "artifacts": [
     {
@@ -118,7 +118,7 @@ Export response payload:
       "sizeBytes": 1234,
       "sha256": "...",
       "artifactRef": "...",
-      "artifactScope": "tasks/thread-main-.../turn-1-...",
+      "artifactScope": ".xworkmate/artifacts/tasks/thread-main-.../turn-1-...",
       "scopeKind": "task"
     }
   ],
@@ -131,7 +131,7 @@ When scoped export finds no task files and `latestIfEmpty` is true, the plugin s
 the workspace root for the latest real files and returns them with `scopeKind:
 "workspace-latest"`. This is a controlled recovery path for existing files already
 present in `/home/ubuntu/.openclaw/workspace`; it still skips plugin metadata and
-runtime directories, including the plugin-owned top-level `tasks/` directory.
+runtime directories, including the plugin-owned `.xworkmate/` directory.
 
 Each exported artifact includes `artifactRef`, a plugin-signed reference over
 the artifact scope, path, size, and SHA-256 digest. `read` accepts
@@ -179,10 +179,10 @@ only remote file access path.
 ## Limits
 
 - Only files inside the resolved OpenClaw workspace are exported.
-- `.git`, `.openclaw`, `.xworkmate`, `.pi`, top-level `tasks/`, build outputs, and dependency folders are skipped when scanning the workspace root.
+- `.git`, `.openclaw`, `.xworkmate`, `.pi`, build outputs, and dependency folders are skipped when scanning the workspace root.
 - Symlinks are skipped to avoid workspace escape.
 - Files larger than `maxInlineBytes` are listed with metadata and a warning, but are not inlined.
-- `artifactScope` must be `tasks/<safe-session-key>/<safe-run-id>`.
+- `artifactScope` must be `.xworkmate/artifacts/tasks/<safe-session-key>/<safe-run-id>`.
 - `artifactScope`, `artifactRef`, and `relativePath` must stay inside the workspace; absolute paths, `..`, empty path segments, and symlink escapes are rejected.
 
 ## Development
