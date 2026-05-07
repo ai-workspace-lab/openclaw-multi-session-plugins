@@ -70,6 +70,9 @@ Prepare request params are supplied by the OpenClaw host, bridge, or APP
 runtime. The plugin treats `sessionKey`, `runId`, and `workspaceDir` as the
 trusted mapping into OpenClaw's built-in multi-session model; it does not parse
 paths from chat text and does not invent fallback session/run identities.
+Gateway methods accept these fields from bridge/app runtime params. The optional
+agent tool does not expose these fields to the model; it only uses host-injected
+tool context.
 
 ```json
 {
@@ -136,20 +139,21 @@ Export response payload:
 ```
 
 Files at or below `maxInlineBytes` also include `encoding: "base64"` and `content`.
-When scoped export finds no task files and `latestIfEmpty` is true, the plugin scans
-the workspace root for the latest real files and returns them with `scopeKind:
-"workspace-latest"`. This is a controlled recovery path for existing files already
-present in `/home/ubuntu/.openclaw/workspace`; it still skips plugin metadata and
-runtime directories, including the top-level `tasks/` directory so other runs are
-not exported as workspace fallback files.
+When `artifactScope` is omitted, export/list defaults to the current task scope
+derived from `sessionKey/runId`. When that current task scope has no files and
+`latestIfEmpty` is true, the plugin scans the workspace root for the latest real
+files and returns them with `scopeKind: "workspace-latest"`. This is a controlled
+recovery path for existing files already present in `/home/ubuntu/.openclaw/workspace`;
+it still skips plugin metadata and runtime directories, including the top-level
+`tasks/` directory so other runs are not exported as workspace fallback files.
 
 Each exported artifact includes `artifactRef`, a plugin-signed reference over
-the artifact scope, path, size, and SHA-256 digest. `read` accepts
+the issued session/run scope, artifact scope, path, size, and SHA-256 digest. `read` accepts
 `artifactScope + relativePath` for the current `sessionKey/runId` task scope.
 Signed task `artifactRef` values are accepted for the current session, including
 same-session historical task fallback results returned by the plugin. Workspace
-fallback files must be read with `artifactRef`; there is no unscoped arbitrary
-workspace read API.
+fallback files must be read with a same-session and same-run `artifactRef`; there
+is no unscoped arbitrary workspace read API.
 
 ## View And Download
 
@@ -196,7 +200,9 @@ only remote file access path.
 - Symlinks are skipped to avoid workspace escape.
 - Files larger than `maxInlineBytes` are listed with metadata and a warning, but are not inlined.
 - `artifactScope` must be `tasks/<safe-session-key>/<safe-run-id>`.
+- `export` and `list` default to the current task scope when `artifactScope` is omitted.
 - Direct `artifactScope + relativePath` reads and scoped exports must match the supplied `sessionKey/runId`.
+- `artifactRef` is bound to the issued session/run and cannot be reused from another run.
 - `artifactScope`, `artifactRef`, and `relativePath` must stay inside the workspace; absolute paths, `..`, empty path segments, and symlink escapes are rejected.
 
 ## Development

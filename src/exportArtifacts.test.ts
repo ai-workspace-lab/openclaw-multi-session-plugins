@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -22,8 +22,8 @@ describe("exportXWorkmateArtifacts", () => {
       pluginConfig: { workspaceDir: root },
     });
 
-    expect(first.artifactScope).toMatch(/^tasks\/thread-main-[a-f0-9]{12}\/turn-1-[a-f0-9]{12}$/);
-    expect(second.artifactScope).toMatch(/^tasks\/thread-main-[a-f0-9]{12}\/turn-2-[a-f0-9]{12}$/);
+    expect(first.artifactScope).toBe("tasks/thread-main/turn-1");
+    expect(second.artifactScope).toBe("tasks/thread-main/turn-2");
     expect(first.artifactScope).not.toBe(second.artifactScope);
     expect((await fs.stat(first.artifactDirectory)).isDirectory()).toBe(true);
     expect(first.remoteWorkingDirectory).toBe(await fs.realpath(root));
@@ -32,8 +32,12 @@ describe("exportXWorkmateArtifacts", () => {
 
   it("exports changed files with metadata and base64 content", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
-    await fs.mkdir(path.join(root, "reports"), { recursive: true });
-    const filePath = path.join(root, "reports", "final.md");
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "run-1" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.mkdir(path.join(prepared.artifactDirectory, "reports"), { recursive: true });
+    const filePath = path.join(prepared.artifactDirectory, "reports", "final.md");
     await fs.writeFile(filePath, "# Done\n");
     const stat = await fs.stat(filePath);
 
@@ -48,6 +52,8 @@ describe("exportXWorkmateArtifacts", () => {
 
     expect(result.remoteWorkingDirectory).toBe(await fs.realpath(root));
     expect(result.remoteWorkspaceRefKind).toBe("remotePath");
+    expect(result.scopeKind).toBe("task");
+    expect(result.artifactScope).toBe(prepared.artifactScope);
     expect(result.artifacts).toHaveLength(1);
     expect(result.artifacts[0]).toMatchObject({
       relativePath: "reports/final.md",
@@ -65,7 +71,11 @@ describe("exportXWorkmateArtifacts", () => {
 
   it("filters old files by sinceUnixMs", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
-    const oldFile = path.join(root, "old.txt");
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "run-1" },
+      pluginConfig: { workspaceDir: root },
+    });
+    const oldFile = path.join(prepared.artifactDirectory, "old.txt");
     await fs.writeFile(oldFile, "old");
     const stat = await fs.stat(oldFile);
 
@@ -83,12 +93,16 @@ describe("exportXWorkmateArtifacts", () => {
 
   it("skips excluded directories and symlinks", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
-    await fs.mkdir(path.join(root, ".git"), { recursive: true });
-    await fs.mkdir(path.join(root, ".xworkmate", "artifacts"), { recursive: true });
-    await fs.writeFile(path.join(root, ".git", "secret.txt"), "secret");
-    await fs.writeFile(path.join(root, ".xworkmate", "artifacts", "index.json"), "{}");
-    await fs.writeFile(path.join(root, "real.txt"), "real");
-    await fs.symlink(path.join(root, "real.txt"), path.join(root, "linked.txt"));
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "run-1" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.mkdir(path.join(prepared.artifactDirectory, ".git"), { recursive: true });
+    await fs.mkdir(path.join(prepared.artifactDirectory, ".xworkmate", "artifacts"), { recursive: true });
+    await fs.writeFile(path.join(prepared.artifactDirectory, ".git", "secret.txt"), "secret");
+    await fs.writeFile(path.join(prepared.artifactDirectory, ".xworkmate", "artifacts", "index.json"), "{}");
+    await fs.writeFile(path.join(prepared.artifactDirectory, "real.txt"), "real");
+    await fs.symlink(path.join(prepared.artifactDirectory, "real.txt"), path.join(prepared.artifactDirectory, "linked.txt"));
 
     const result = await exportXWorkmateArtifacts({
       params: {
@@ -133,6 +147,53 @@ describe("exportXWorkmateArtifacts", () => {
       artifactScope: first.artifactScope,
       scopeKind: "task",
     });
+  });
+
+  it("uses the current task scope when artifactScope is omitted", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
+    const current = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "turn-1" },
+      pluginConfig: { workspaceDir: root },
+    });
+    const other = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "turn-2" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.writeFile(path.join(root, "global.txt"), "global");
+    await fs.writeFile(path.join(current.artifactDirectory, "current.txt"), "current");
+    await fs.writeFile(path.join(other.artifactDirectory, "other.txt"), "other");
+
+    const result = await exportXWorkmateArtifacts({
+      params: {
+        sessionKey: "thread-main",
+        runId: "turn-1",
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+
+    expect(result.scopeKind).toBe("task");
+    expect(result.artifactScope).toBe(current.artifactScope);
+    expect(result.artifacts.map((entry) => entry.relativePath)).toEqual(["current.txt"]);
+  });
+
+  it("does not scan the workspace root when the current task scope is empty without latestIfEmpty", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
+    await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "turn-1" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.writeFile(path.join(root, "global.txt"), "global");
+
+    const result = await exportXWorkmateArtifacts({
+      params: {
+        sessionKey: "thread-main",
+        runId: "turn-1",
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+
+    expect(result.scopeKind).toBe("task");
+    expect(result.artifacts).toEqual([]);
   });
 
   it("rejects scoped exports that do not match the requested session/run", async () => {
@@ -229,12 +290,43 @@ describe("exportXWorkmateArtifacts", () => {
       { artifactScope: previousTask.artifactScope, scopeKind: "task" },
       { artifactScope: previousTask.artifactScope, scopeKind: "task" },
     ]);
-    expect(result.warnings).toContain("workspace export is empty; exported latest session task files instead");
+    expect(result.warnings).toContain("scoped artifact directory is empty; exported latest session task files instead");
+  });
+
+  it("does not include another session in latest session task fallback", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
+    const sameSessionTask = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "turn-previous" },
+      pluginConfig: { workspaceDir: root },
+    });
+    const otherSessionTask = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-other", runId: "turn-previous" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.writeFile(path.join(sameSessionTask.artifactDirectory, "same.txt"), "same");
+    await fs.writeFile(path.join(otherSessionTask.artifactDirectory, "other.txt"), "other");
+
+    const result = await exportXWorkmateArtifacts({
+      params: {
+        sessionKey: "thread-main",
+        runId: "turn-follow-up",
+        latestIfEmpty: true,
+        latestTaskScopeIfEmpty: true,
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+
+    expect(result.artifacts.map((entry) => entry.relativePath)).toEqual(["same.txt"]);
+    expect(result.artifacts[0]?.artifactScope).toBe(sameSessionTask.artifactScope);
   });
 
   it("leaves oversized artifacts out of inline content", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
-    await fs.writeFile(path.join(root, "large.pdf"), Buffer.from("large-content"));
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "run-1" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.writeFile(path.join(prepared.artifactDirectory, "large.pdf"), Buffer.from("large-content"));
 
     const result = await exportXWorkmateArtifacts({
       params: {
@@ -253,7 +345,11 @@ describe("exportXWorkmateArtifacts", () => {
 
   it("can list artifacts without inline content", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
-    await fs.writeFile(path.join(root, "small.txt"), "small");
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "run-1" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.writeFile(path.join(prepared.artifactDirectory, "small.txt"), "small");
 
     const result = await exportXWorkmateArtifacts({
       params: {
@@ -272,8 +368,12 @@ describe("exportXWorkmateArtifacts", () => {
 
   it("limits exported files", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
-    await fs.writeFile(path.join(root, "a.txt"), "a");
-    await fs.writeFile(path.join(root, "b.txt"), "b");
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "run-1" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.writeFile(path.join(prepared.artifactDirectory, "a.txt"), "a");
+    await fs.writeFile(path.join(prepared.artifactDirectory, "b.txt"), "b");
 
     const result = await exportXWorkmateArtifacts({
       params: {
@@ -292,7 +392,11 @@ describe("exportXWorkmateArtifacts", () => {
     const mainRoot = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-main-"));
     const agentRoot = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-agent-"));
     await fs.writeFile(path.join(mainRoot, "main.txt"), "main");
-    await fs.writeFile(path.join(agentRoot, "agent.txt"), "agent");
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "agent:research:thread-1", runId: "run-1" },
+      pluginConfig: { workspaceDir: agentRoot },
+    });
+    await fs.writeFile(path.join(prepared.artifactDirectory, "agent.txt"), "agent");
 
     const result = await exportXWorkmateArtifacts({
       params: {
@@ -404,7 +508,7 @@ describe("exportXWorkmateArtifacts", () => {
         },
         pluginConfig: { workspaceDir: root },
       }),
-    ).rejects.toThrow("artifactScope does not match sessionKey/runId");
+    ).rejects.toThrow("artifactRef does not match sessionKey/runId");
   });
 
   it("reads a latest workspace artifact only through its artifactRef", async () => {
@@ -445,9 +549,44 @@ describe("exportXWorkmateArtifacts", () => {
     });
   });
 
+  it("rejects latest workspace artifact refs from another run", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "turn-1" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.writeFile(path.join(root, "existing.txt"), "existing");
+
+    const exported = await exportXWorkmateArtifacts({
+      params: {
+        sessionKey: "thread-main",
+        runId: "turn-1",
+        artifactScope: prepared.artifactScope,
+        sinceUnixMs: Date.now() + 10_000,
+        latestIfEmpty: true,
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+
+    await expect(
+      readXWorkmateArtifact({
+        params: {
+          sessionKey: "thread-main",
+          runId: "turn-2",
+          artifactRef: exported.artifacts[0]?.artifactRef,
+        },
+        pluginConfig: { workspaceDir: root },
+      }),
+    ).rejects.toThrow("artifactRef does not match sessionKey/runId");
+  });
+
   it("rejects tampered artifact refs", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
-    await fs.writeFile(path.join(root, "existing.txt"), "existing");
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "run-1" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.writeFile(path.join(prepared.artifactDirectory, "existing.txt"), "existing");
     const exported = await exportXWorkmateArtifacts({
       params: {
         sessionKey: "thread-main",
@@ -466,6 +605,35 @@ describe("exportXWorkmateArtifacts", () => {
           artifactRef: tampered,
         },
         pluginConfig: { workspaceDir: root },
+      }),
+    ).rejects.toThrow("invalid artifactRef");
+  });
+
+  it("rejects legacy v1 artifact refs", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
+    const secret = "test-secret";
+    const legacyPayload = Buffer.from(
+      JSON.stringify({
+        v: 1,
+        workspaceRootHash: createHash("sha256").update(path.resolve(root)).digest("hex"),
+        scopeKind: "workspace-latest",
+        relativePath: "existing.txt",
+        sizeBytes: 8,
+        sha256: createHash("sha256").update("existing").digest("hex"),
+      }),
+      "utf8",
+    ).toString("base64url");
+    const signature = createHmac("sha256", secret).update(legacyPayload).digest("base64url");
+    const legacyRef = `${legacyPayload}.${signature}`;
+
+    await expect(
+      readXWorkmateArtifact({
+        params: {
+          sessionKey: "thread-main",
+          runId: "run-1",
+          artifactRef: legacyRef,
+        },
+        pluginConfig: { workspaceDir: root, artifactRefSigningSecret: secret },
       }),
     ).rejects.toThrow("invalid artifactRef");
   });

@@ -4,6 +4,7 @@ import path from "node:path";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import plugin from "./index.js";
+import { prepareXWorkmateArtifacts } from "./src/exportArtifacts.js";
 
 type GatewayMethodHandler = Parameters<OpenClawPluginApi["registerGatewayMethod"]>[1];
 
@@ -63,13 +64,59 @@ describe("plugin registration", () => {
     plugin.register(api);
 
     const factory = tools[0]?.tool as (ctx: Record<string, unknown>) => {
+      parameters: { properties?: Record<string, unknown> };
       execute: (id: string, params: Record<string, unknown>) => Promise<unknown>;
     };
     const tool = factory({});
 
-    await expect(tool.execute("call-1", { action: "list", runId: "turn-1" })).rejects.toThrow("sessionKey required");
-    await expect(tool.execute("call-2", { action: "list", sessionKey: "thread-main" })).rejects.toThrow(
+    expect(tool.parameters.properties?.sessionKey).toBeUndefined();
+    expect(tool.parameters.properties?.runId).toBeUndefined();
+    expect(tool.parameters.properties?.workspaceDir).toBeUndefined();
+    await expect(tool.execute("call-1", { action: "list" })).rejects.toThrow("sessionKey required");
+    await expect(factory({ sessionKey: "thread-main" }).execute("call-2", { action: "list" })).rejects.toThrow(
       "runId required",
     );
+  });
+
+  it("uses host context scope for the optional agent tool", async () => {
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-tool-"));
+    const current = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "turn-1" },
+      pluginConfig: { workspaceDir: root },
+    });
+    const other = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "turn-2" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.promises.writeFile(path.join(current.artifactDirectory, "current.txt"), "current");
+    await fs.promises.writeFile(path.join(other.artifactDirectory, "other.txt"), "other");
+    await fs.promises.writeFile(path.join(root, "global.txt"), "global");
+
+    const tools: Array<{ tool: unknown; options: unknown }> = [];
+    const api = {
+      config: {},
+      pluginConfig: {},
+      registerGatewayMethod: () => undefined,
+      registerTool: (tool: unknown, options: unknown) => {
+        tools.push({ tool, options });
+      },
+    } as unknown as OpenClawPluginApi;
+
+    plugin.register(api);
+
+    const factory = tools[0]?.tool as (ctx: Record<string, unknown>) => {
+      execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }>;
+    };
+    const tool = factory({ sessionKey: "thread-main", runId: "turn-1", workspaceDir: root });
+    const result = await tool.execute("call-1", {
+      action: "list",
+      sessionKey: "thread-other",
+      runId: "turn-2",
+      workspaceDir: "/",
+    });
+
+    expect(result.content[0]?.text).toContain("current.txt");
+    expect(result.content[0]?.text).not.toContain("other.txt");
+    expect(result.content[0]?.text).not.toContain("global.txt");
   });
 });
