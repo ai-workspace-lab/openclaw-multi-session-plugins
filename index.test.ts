@@ -12,7 +12,7 @@ describe("plugin registration", () => {
       configSchema?: { properties?: Record<string, unknown> };
     };
 
-    expect(manifest.contracts?.tools).toContain("xworkmate_artifacts");
+    expect(manifest.contracts?.tools).toContain("openclaw_multi_session_artifacts");
     expect(manifest.configSchema?.properties?.artifactRefSigningSecret).toBeTruthy();
   });
 

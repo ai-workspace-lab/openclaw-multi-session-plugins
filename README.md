@@ -1,14 +1,14 @@
-# xworkmate-artifacts
+# openclaw-multi-session-plugins
 
-OpenClaw Gateway plugin that exports structured workspace artifact manifests for XWorkmate.
+OpenClaw plugin for logical multi-session isolation and scoped XWorkmate artifact manifests.
 
 ## Why
 
 XWorkmate talks to OpenClaw through `xworkmate-bridge` using the existing
 `/gateway/openclaw` task contract. The bridge sends `chat.send`, waits for
-`agent.wait`, then asks this plugin for a structured artifact manifest. The APP
-can then sync generated files into its local thread workspace without changing
-the UI or adding provider-specific routes.
+`agent.wait`, then asks this plugin for a session/run-scoped artifact manifest.
+The APP can then sync generated files into its local thread workspace without
+changing the UI or adding provider-specific routes.
 
 It registers four Gateway methods:
 
@@ -28,16 +28,16 @@ into the APP `artifacts[]` contract.
 Install from the npm package through OpenClaw:
 
 ```bash
-openclaw plugins install xworkmate-artifacts
-openclaw plugins enable xworkmate-artifacts
+openclaw plugins install openclaw-multi-session-plugins
+openclaw plugins enable openclaw-multi-session-plugins
 ```
 
 Or install from a Git checkout for development:
 
 ```bash
-git clone https://github.com/x-evor/xworkmate-artifacts.git
-openclaw plugins install --link ./xworkmate-artifacts
-openclaw plugins enable xworkmate-artifacts
+git clone https://github.com/x-evor/openclaw-multi-session-plugins.git
+openclaw plugins install --link ./openclaw-multi-session-plugins
+openclaw plugins enable openclaw-multi-session-plugins
 ```
 
 Equivalent config shape for a linked checkout:
@@ -47,11 +47,11 @@ Equivalent config shape for a linked checkout:
   "plugins": {
     "load": {
       "paths": [
-        "/path/to/xworkmate-artifacts"
+        "/path/to/openclaw-multi-session-plugins"
       ]
     },
     "entries": {
-      "xworkmate-artifacts": {
+      "openclaw-multi-session-plugins": {
         "enabled": true
       }
     }
@@ -151,7 +151,7 @@ show a quick artifact table:
       {
         "id": "main",
         "tools": {
-          "allow": ["xworkmate_artifacts"]
+          "allow": ["openclaw_multi_session_artifacts"]
         }
       }
     ]

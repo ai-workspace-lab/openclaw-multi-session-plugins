@@ -1,7 +1,7 @@
 {
-  "name": "xworkmate-artifacts",
+  "name": "openclaw-multi-session-plugins",
   "version": "0.1.8",
-  "description": "XWorkmate artifact export plugin for OpenClaw Gateway",
+  "description": "OpenClaw multi-session plugin runtime support for scoped XWorkmate artifacts",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -9,15 +9,18 @@
     "xworkmate",
     "artifacts",
     "gateway",
-    "plugin"
+    "plugin",
+    "multi-session",
+    "session-isolation",
+    "logical-isolation"
   ],
-  "homepage": "https://github.com/x-evor/xworkmate-artifacts#readme",
+  "homepage": "https://github.com/x-evor/openclaw-multi-session-plugins#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/x-evor/xworkmate-artifacts.git"
+    "url": "git+https://github.com/x-evor/openclaw-multi-session-plugins.git"
   },
   "bugs": {
-    "url": "https://github.com/x-evor/xworkmate-artifacts/issues"
+    "url": "https://github.com/x-evor/openclaw-multi-session-plugins/issues"
   },
   "engines": {
     "node": ">=22"

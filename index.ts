@@ -16,9 +16,9 @@ type XWorkmateToolContext = {
 };
 
 const plugin = {
-  id: "xworkmate-artifacts",
-  name: "XWorkmate Artifacts",
-  description: "Exports structured artifact manifests from the OpenClaw workspace for XWorkmate.",
+  id: "openclaw-multi-session-plugins",
+  name: "openclaw-multi-session-plugins",
+  description: "OpenClaw logical isolation support for multi-session plugin runtimes and scoped XWorkmate artifacts.",
   register,
 };
 
@@ -86,7 +86,7 @@ function register(api: OpenClawPluginApi) {
     }
   });
   api.registerTool((ctx) => createXWorkmateArtifactsTool(api, ctx), {
-    names: ["xworkmate_artifacts"],
+    names: ["openclaw_multi_session_artifacts"],
     optional: true,
   });
 }
@@ -96,8 +96,8 @@ function createXWorkmateArtifactsTool(
   ctx: XWorkmateToolContext,
 ): AnyAgentTool {
   return {
-    name: "xworkmate_artifacts",
-    label: "XWorkmate Artifacts",
+    name: "openclaw_multi_session_artifacts",
+    label: "openclaw-multi-session-plugins",
     description:
       "List generated artifacts in the current OpenClaw workspace or read one small artifact as base64 for XWorkmate.",
     parameters: {

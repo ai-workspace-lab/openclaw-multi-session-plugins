@@ -1,12 +1,12 @@
 {
-  "id": "xworkmate-artifacts",
-  "name": "XWorkmate Artifacts",
-  "description": "Exports structured artifact manifests from the OpenClaw workspace for XWorkmate.",
+  "id": "openclaw-multi-session-plugins",
+  "name": "openclaw-multi-session-plugins",
+  "description": "OpenClaw logical isolation support for multi-session plugin runtimes and scoped XWorkmate artifacts.",
   "activation": {
     "onStartup": true
   },
   "contracts": {
-    "tools": ["xworkmate_artifacts"]
+    "tools": ["openclaw_multi_session_artifacts"]
   },
   "configSchema": {
     "type": "object",
