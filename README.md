@@ -10,6 +10,11 @@ XWorkmate talks to OpenClaw through `xworkmate-bridge` using the existing
 The APP can then sync generated files into its local thread workspace without
 changing the UI or adding provider-specific routes.
 
+This plugin is not a scheduler. OpenClaw core owns sub-agents, multi-agent
+routing, queues, cron, and cross-session execution. This package only adapts
+those existing OpenClaw multi-task/session identities into isolated artifact
+directories and signed artifact reads.
+
 It registers four Gateway methods:
 
 ```text
@@ -61,12 +66,16 @@ Equivalent config shape for a linked checkout:
 
 ## Contract
 
-Prepare request params:
+Prepare request params are supplied by the OpenClaw host, bridge, or APP
+runtime. The plugin treats `sessionKey`, `runId`, and `workspaceDir` as the
+trusted mapping into OpenClaw's built-in multi-session model; it does not parse
+paths from chat text and does not invent fallback session/run identities.
 
 ```json
 {
   "sessionKey": "thread-main",
-  "runId": "turn-1"
+  "runId": "turn-1",
+  "workspaceDir": "/home/user/.openclaw/workspace"
 }
 ```
 
@@ -131,13 +140,16 @@ When scoped export finds no task files and `latestIfEmpty` is true, the plugin s
 the workspace root for the latest real files and returns them with `scopeKind:
 "workspace-latest"`. This is a controlled recovery path for existing files already
 present in `/home/ubuntu/.openclaw/workspace`; it still skips plugin metadata and
-runtime directories, including the plugin-owned `.xworkmate/` directory.
+runtime directories, including the top-level `tasks/` directory so other runs are
+not exported as workspace fallback files.
 
 Each exported artifact includes `artifactRef`, a plugin-signed reference over
 the artifact scope, path, size, and SHA-256 digest. `read` accepts
-`artifactScope + relativePath` for task-scope files. Workspace fallback files
-must be read with `artifactRef`; there is no unscoped arbitrary workspace read
-API.
+`artifactScope + relativePath` for the current `sessionKey/runId` task scope.
+Signed task `artifactRef` values are accepted for the current session, including
+same-session historical task fallback results returned by the plugin. Workspace
+fallback files must be read with `artifactRef`; there is no unscoped arbitrary
+workspace read API.
 
 ## View And Download
 
@@ -180,9 +192,11 @@ only remote file access path.
 
 - Only files inside the resolved OpenClaw workspace are exported.
 - `.git`, `.openclaw`, `.xworkmate`, `.pi`, build outputs, and dependency folders are skipped when scanning the workspace root.
+- Top-level `tasks/` is skipped during workspace fallback scanning.
 - Symlinks are skipped to avoid workspace escape.
 - Files larger than `maxInlineBytes` are listed with metadata and a warning, but are not inlined.
 - `artifactScope` must be `tasks/<safe-session-key>/<safe-run-id>`.
+- Direct `artifactScope + relativePath` reads and scoped exports must match the supplied `sessionKey/runId`.
 - `artifactScope`, `artifactRef`, and `relativePath` must stay inside the workspace; absolute paths, `..`, empty path segments, and symlink escapes are rejected.
 
 ## Development

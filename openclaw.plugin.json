@@ -6,7 +6,8 @@
     "onStartup": true
   },
   "contracts": {
-    "tools": ["openclaw_multi_session_artifacts"]
+    "tools": ["openclaw_multi_session_artifacts"],
+    "sessionScopedTools": ["openclaw_multi_session_artifacts"]
   },
   "configSchema": {
     "type": "object",

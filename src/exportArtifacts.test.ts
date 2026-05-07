@@ -135,6 +135,29 @@ describe("exportXWorkmateArtifacts", () => {
     });
   });
 
+  it("rejects scoped exports that do not match the requested session/run", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
+    const first = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "turn-1" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "turn-2" },
+      pluginConfig: { workspaceDir: root },
+    });
+
+    await expect(
+      exportXWorkmateArtifacts({
+        params: {
+          sessionKey: "thread-main",
+          runId: "turn-2",
+          artifactScope: first.artifactScope,
+        },
+        pluginConfig: { workspaceDir: root },
+      }),
+    ).rejects.toThrow("artifactScope does not match sessionKey/runId");
+  });
+
   it("falls back to latest workspace files when the scoped directory is empty", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
     const prepared = await prepareXWorkmateArtifacts({
@@ -335,6 +358,55 @@ describe("exportXWorkmateArtifacts", () => {
     expect(result.artifacts[0]?.artifactRef).toContain(".");
   });
 
+  it("rejects direct reads from another run artifact scope", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
+    const first = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "turn-1" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.writeFile(path.join(first.artifactDirectory, "first.txt"), "first");
+
+    await expect(
+      readXWorkmateArtifact({
+        params: {
+          sessionKey: "thread-main",
+          runId: "turn-2",
+          artifactScope: first.artifactScope,
+          relativePath: "first.txt",
+        },
+        pluginConfig: { workspaceDir: root },
+      }),
+    ).rejects.toThrow("artifactScope does not match sessionKey/runId");
+  });
+
+  it("rejects signed task artifact refs from another session", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "turn-1" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.writeFile(path.join(prepared.artifactDirectory, "first.txt"), "first");
+    const exported = await exportXWorkmateArtifacts({
+      params: {
+        sessionKey: "thread-main",
+        runId: "turn-1",
+        artifactScope: prepared.artifactScope,
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+
+    await expect(
+      readXWorkmateArtifact({
+        params: {
+          sessionKey: "thread-other",
+          runId: "turn-1",
+          artifactRef: exported.artifacts[0]?.artifactRef,
+        },
+        pluginConfig: { workspaceDir: root },
+      }),
+    ).rejects.toThrow("artifactScope does not match sessionKey/runId");
+  });
+
   it("reads a latest workspace artifact only through its artifactRef", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
     const prepared = await prepareXWorkmateArtifacts({
@@ -409,7 +481,7 @@ describe("exportXWorkmateArtifacts", () => {
     const result = await readXWorkmateArtifact({
       params: {
         sessionKey: "thread-main",
-        runId: "run-1",
+        runId: "turn-1",
         artifactScope: prepared.artifactScope,
         relativePath: "large.bin",
         maxInlineBytes: 2,
@@ -440,7 +512,7 @@ describe("exportXWorkmateArtifacts", () => {
       readXWorkmateArtifact({
         params: {
           sessionKey: "thread-main",
-          runId: "run-1",
+          runId: "turn-1",
           artifactScope: prepared.artifactScope,
           relativePath: "../outside.txt",
         },
@@ -480,7 +552,7 @@ describe("exportXWorkmateArtifacts", () => {
       readXWorkmateArtifact({
         params: {
           sessionKey: "thread-main",
-          runId: "run-1",
+          runId: "turn-1",
           artifactScope: prepared.artifactScope,
           relativePath: "linked-secret.txt",
         },

@@ -121,6 +121,18 @@ function createXWorkmateArtifactsTool(
           type: "string",
           description: "Plugin-signed artifact reference returned by export/list. Required for workspace-latest reads.",
         },
+        sessionKey: {
+          type: "string",
+          description: "OpenClaw session key supplied by the host or bridge runtime.",
+        },
+        runId: {
+          type: "string",
+          description: "OpenClaw run id supplied by the host or bridge runtime.",
+        },
+        workspaceDir: {
+          type: "string",
+          description: "OpenClaw workspace directory supplied by the host or bridge runtime.",
+        },
         sinceUnixMs: {
           type: "number",
           description: "Only list files changed at or after this Unix timestamp in milliseconds.",
@@ -138,11 +150,20 @@ function createXWorkmateArtifactsTool(
     },
     async execute(_id: string, params: Record<string, unknown>) {
       const action = typeof params.action === "string" ? params.action : "";
+      const sessionKey = typeof params.sessionKey === "string" ? params.sessionKey : ctx.sessionKey;
+      const runId = typeof params.runId === "string" ? params.runId : "";
+      const workspaceDir = typeof params.workspaceDir === "string" ? params.workspaceDir : ctx.workspaceDir;
+      if (!sessionKey) {
+        throw new Error("sessionKey required");
+      }
+      if (!runId) {
+        throw new Error("runId required");
+      }
       const baseParams = {
         ...params,
-        sessionKey: ctx.sessionKey || "agent:main:main",
-        runId: typeof params.runId === "string" ? params.runId : "tool",
-        workspaceDir: ctx.workspaceDir,
+        sessionKey,
+        runId,
+        ...(workspaceDir ? { workspaceDir } : {}),
       };
       if (action === "list") {
         const payload = await exportXWorkmateArtifacts({

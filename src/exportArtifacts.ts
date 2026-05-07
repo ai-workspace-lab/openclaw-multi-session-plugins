@@ -96,6 +96,11 @@ export async function prepareXWorkmateArtifacts(input: ExportInput): Promise<XWo
   const pluginConfig = input.pluginConfig ?? {};
   const runId = requiredString(params.runId, "runId required");
   const sessionKey = requiredString(params.sessionKey, "sessionKey required");
+  const expectedArtifactScope = artifactScopeFor(sessionKey, runId);
+  const requestedArtifactScope = optionalArtifactScope(params.artifactScope);
+  if (requestedArtifactScope && requestedArtifactScope !== expectedArtifactScope) {
+    throw new Error("artifactScope does not match sessionKey/runId");
+  }
   const workspaceDir = resolveWorkspaceDir({
     config: input.config,
     pluginConfig,
@@ -103,7 +108,7 @@ export async function prepareXWorkmateArtifacts(input: ExportInput): Promise<XWo
     sessionKey,
   });
   const workspaceRoot = await fs.realpath(workspaceDir);
-  const artifactScope = artifactScopeFor(sessionKey, runId);
+  const artifactScope = expectedArtifactScope;
   const scopeRoot = resolveScopeRoot(workspaceRoot, artifactScope);
   await fs.mkdir(scopeRoot, { recursive: true });
   return {
@@ -144,6 +149,10 @@ export async function exportXWorkmateArtifacts(input: ExportInput): Promise<XWor
   const workspaceRoot = await fs.realpath(workspaceDir);
   const warnings: string[] = [];
   const artifactScope = optionalArtifactScope(params.artifactScope);
+  const expectedArtifactScope = artifactScopeFor(sessionKey, runId);
+  if (artifactScope && artifactScope !== expectedArtifactScope) {
+    throw new Error("artifactScope does not match sessionKey/runId");
+  }
   const scopeRoot = artifactScope ? resolveScopeRoot(workspaceRoot, artifactScope) : workspaceRoot;
   const scopedExport = artifactScope !== "";
   let scopeKind: XWorkmateArtifactScopeKind = scopedExport ? "task" : "workspace";
@@ -253,8 +262,10 @@ export async function exportXWorkmateArtifacts(input: ExportInput): Promise<XWor
 export async function readXWorkmateArtifact(input: ReadInput): Promise<XWorkmateArtifactExport> {
   const params = input.params ?? {};
   const pluginConfig = input.pluginConfig ?? {};
-  const runId = optionalString(params.runId) || "read";
+  const runId = requiredString(params.runId, "runId required");
   const sessionKey = requiredString(params.sessionKey, "sessionKey required");
+  const expectedArtifactScope = artifactScopeFor(sessionKey, runId);
+  const expectedSessionScope = taskSessionScopeFor(sessionKey);
   const requestedArtifactRef = optionalString(params.artifactRef);
   let relativePath = "";
   let artifactScope = optionalArtifactScope(params.artifactScope);
@@ -285,10 +296,18 @@ export async function readXWorkmateArtifact(input: ReadInput): Promise<XWorkmate
     if (requestedScope && requestedScope !== artifactScope) {
       throw new Error("artifactRef does not match artifactScope");
     }
+    if (refPayload.scopeKind === "task") {
+      assertArtifactScopeMatchesRequest(artifactScope, expectedArtifactScope, expectedSessionScope, {
+        allowSameSessionTaskHistory: true,
+      });
+    }
   } else {
     if (!artifactScope) {
       throw new Error("artifactScope or artifactRef required");
     }
+    assertArtifactScopeMatchesRequest(artifactScope, expectedArtifactScope, expectedSessionScope, {
+      allowSameSessionTaskHistory: false,
+    });
     relativePath = safeInputRelativePath(params.relativePath, "relativePath");
   }
   const scopeRoot = artifactScope ? resolveScopeRoot(workspaceRoot, artifactScope) : workspaceRoot;
@@ -462,7 +481,7 @@ async function collectLatestSessionTaskCandidates(input: {
   sessionKey: string;
   warnings: string[];
 }): Promise<Candidate[]> {
-  const sessionScope = [TASK_SCOPE_ROOT, safeScopeSegment(input.sessionKey)].join("/");
+  const sessionScope = taskSessionScopeFor(input.sessionKey);
   const sessionRoot = path.join(input.workspaceRoot, sessionScope.split("/").join(path.sep));
   let entries;
   try {
@@ -501,17 +520,32 @@ async function collectLatestSessionTaskCandidates(input: {
 }
 
 function artifactScopeFor(sessionKey: string, runId: string): string {
-  return [
-    TASK_SCOPE_ROOT,
-    safeScopeSegment(sessionKey),
-    safeScopeSegment(runId),
-  ].join("/");
+  return [taskSessionScopeFor(sessionKey), safeScopeSegment(runId)].join("/");
+}
+
+function taskSessionScopeFor(sessionKey: string): string {
+  return [TASK_SCOPE_ROOT, safeScopeSegment(sessionKey)].join("/");
+}
+
+function assertArtifactScopeMatchesRequest(
+  artifactScope: string,
+  expectedArtifactScope: string,
+  expectedSessionScope: string,
+  options: { allowSameSessionTaskHistory: boolean },
+): void {
+  if (artifactScope === expectedArtifactScope) {
+    return;
+  }
+  if (options.allowSameSessionTaskHistory && artifactScope.startsWith(`${expectedSessionScope}/`)) {
+    return;
+  }
+  throw new Error("artifactScope does not match sessionKey/runId");
 }
 
 function safeScopeSegment(value: string): string {
   const normalized = value
     .trim()
-    .replaceAll(path.sep, "_")
+    .replace(/[\\/]+/g, "_")
     .replace(/[^A-Za-z0-9._-]+/g, "_")
     .replace(/^[._-]+|[._-]+$/g, "")
     .slice(0, 48);
