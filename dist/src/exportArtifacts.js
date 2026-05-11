@@ -76,13 +76,19 @@ export async function exportXWorkmateArtifacts(input) {
     const artifactScope = requestedArtifactScope || expectedArtifactScope;
     const scopeRoot = resolveScopeRoot(workspaceRoot, artifactScope);
     const scopeKind = "task";
-    const candidates = await collectCandidates({
-        scanRoot: scopeRoot,
-        relativeRoot: scopeRoot,
-        sinceUnixMs,
-        skipTaskScopeRoot: false,
-        warnings,
-    });
+    const scopePrepared = await directoryExists(scopeRoot);
+    const candidates = scopePrepared
+        ? await collectCandidates({
+            scanRoot: scopeRoot,
+            relativeRoot: scopeRoot,
+            sinceUnixMs,
+            skipTaskScopeRoot: false,
+            warnings,
+        })
+        : [];
+    if (!scopePrepared) {
+        warnings.push("artifact scope is not prepared");
+    }
     candidates.sort((left, right) => {
         if (right.mtimeMs !== left.mtimeMs) {
             return right.mtimeMs - left.mtimeMs;
@@ -396,6 +402,15 @@ function safeTaskSessionScope(value) {
         throw new Error("invalid artifactRef");
     }
     return scope;
+}
+async function directoryExists(absolutePath) {
+    try {
+        const stat = await fs.stat(absolutePath);
+        return stat.isDirectory();
+    }
+    catch {
+        return false;
+    }
 }
 function safeArtifactRefRunScope(value) {
     try {

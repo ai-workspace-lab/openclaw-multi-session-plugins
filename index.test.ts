@@ -7,6 +7,11 @@ import plugin from "./index.js";
 import { prepareXWorkmateArtifacts } from "./src/exportArtifacts.js";
 
 type GatewayMethodHandler = Parameters<OpenClawPluginApi["registerGatewayMethod"]>[1];
+type GatewayMethodResponse = {
+  ok: boolean;
+  payload?: Record<string, unknown>;
+  error?: { code?: string; message?: string };
+};
 
 describe("plugin registration", () => {
   it("declares registered agent tools in the manifest contract", () => {
@@ -48,6 +53,68 @@ describe("plugin registration", () => {
       names: ["openclaw_multi_session_artifacts"],
       optional: true,
     });
+  });
+
+  it("executes registered gateway methods against the current task scope", async () => {
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-gateway-"));
+    const methods = new Map<string, GatewayMethodHandler>();
+    const api = {
+      config: {},
+      pluginConfig: { workspaceDir: root },
+      registerGatewayMethod: (method: string, handler: GatewayMethodHandler) => {
+        methods.set(method, handler);
+      },
+      registerTool: () => undefined,
+    } as unknown as OpenClawPluginApi;
+
+    plugin.register(api);
+
+    const prepared = await callGatewayMethod(methods, "xworkmate.artifacts.prepare", {
+      sessionKey: "thread-main",
+      runId: "turn-1",
+    });
+    expect(prepared.ok).toBe(true);
+    expect(prepared.payload?.artifactScope).toBe("tasks/thread-main/turn-1");
+    const artifactDirectory = String(prepared.payload?.artifactDirectory);
+
+    const emptyExport = await callGatewayMethod(methods, "xworkmate.artifacts.export", {
+      sessionKey: "thread-main",
+      runId: "turn-1",
+      artifactScope: prepared.payload?.artifactScope,
+    });
+    expect(emptyExport.ok).toBe(true);
+    expect(emptyExport.payload?.artifacts).toEqual([]);
+    expect(emptyExport.payload?.warnings).toEqual([]);
+
+    await fs.promises.mkdir(path.join(artifactDirectory, "reports"), { recursive: true });
+    await fs.promises.writeFile(path.join(artifactDirectory, "reports", "final.md"), "final");
+
+    const listed = await callGatewayMethod(methods, "xworkmate.artifacts.list", {
+      sessionKey: "thread-main",
+      runId: "turn-1",
+      artifactScope: prepared.payload?.artifactScope,
+    });
+    expect(listed.ok).toBe(true);
+    expect(listed.payload?.artifacts).toMatchObject([{ relativePath: "reports/final.md" }]);
+    const listedArtifacts = listed.payload?.artifacts as Array<Record<string, unknown>>;
+    expect(listedArtifacts[0]).not.toHaveProperty("content");
+
+    const read = await callGatewayMethod(methods, "xworkmate.artifacts.read", {
+      sessionKey: "thread-main",
+      runId: "turn-1",
+      artifactScope: prepared.payload?.artifactScope,
+      relativePath: "reports/final.md",
+    });
+    expect(read.ok).toBe(true);
+    expect(read.payload?.artifacts).toMatchObject([{ relativePath: "reports/final.md", encoding: "base64" }]);
+
+    const unprepared = await callGatewayMethod(methods, "xworkmate.artifacts.export", {
+      sessionKey: "thread-main",
+      runId: "turn-unprepared",
+    });
+    expect(unprepared.ok).toBe(true);
+    expect(unprepared.payload?.artifacts).toEqual([]);
+    expect(unprepared.payload?.warnings).toEqual(["artifact scope is not prepared"]);
   });
 
   it("does not invent default session or run ids for the optional agent tool", async () => {
@@ -120,3 +187,25 @@ describe("plugin registration", () => {
     expect(result.content[0]?.text).not.toContain("global.txt");
   });
 });
+
+async function callGatewayMethod(
+  methods: Map<string, GatewayMethodHandler>,
+  method: string,
+  params: Record<string, unknown>,
+): Promise<GatewayMethodResponse> {
+  const handler = methods.get(method);
+  if (!handler) {
+    throw new Error(`missing gateway method ${method}`);
+  }
+  let response: GatewayMethodResponse | undefined;
+  await handler({
+    params,
+    respond: (ok: boolean, payload?: Record<string, unknown>, error?: GatewayMethodResponse["error"]) => {
+      response = { ok, payload, error };
+    },
+  } as Parameters<GatewayMethodHandler>[0]);
+  if (!response) {
+    throw new Error(`gateway method ${method} did not respond`);
+  }
+  return response;
+}
