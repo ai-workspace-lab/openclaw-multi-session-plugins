@@ -176,7 +176,7 @@ describe("exportXWorkmateArtifacts", () => {
     expect(result.artifacts.map((entry) => entry.relativePath)).toEqual(["current.txt"]);
   });
 
-  it("does not scan the workspace root when the current task scope is empty without latestIfEmpty", async () => {
+  it("does not scan the workspace root when the current task scope is empty", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
     await prepareXWorkmateArtifacts({
       params: { sessionKey: "thread-main", runId: "turn-1" },
@@ -219,7 +219,7 @@ describe("exportXWorkmateArtifacts", () => {
     ).rejects.toThrow("artifactScope does not match sessionKey/runId");
   });
 
-  it("falls back to latest workspace files when the scoped directory is empty", async () => {
+  it("does not fall back to workspace files when the scoped directory is empty", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
     const prepared = await prepareXWorkmateArtifacts({
       params: { sessionKey: "thread-main", runId: "turn-1" },
@@ -241,24 +241,24 @@ describe("exportXWorkmateArtifacts", () => {
         runId: "turn-1",
         artifactScope: prepared.artifactScope,
         sinceUnixMs: stat.mtimeMs + 10_000,
-        latestIfEmpty: true,
       },
       pluginConfig: { workspaceDir: root },
     });
 
-    expect(result.scopeKind).toBe("workspace-latest");
-    expect(result.artifactScope).toBeUndefined();
-    expect(result.artifacts.map((entry) => entry.relativePath)).toEqual(["existing.pdf"]);
-    expect(result.artifacts[0]?.artifactScope).toBeUndefined();
-    expect(result.artifacts[0]?.scopeKind).toBe("workspace-latest");
-    expect(result.artifacts[0]?.artifactRef).toContain(".");
-    expect(result.warnings).toContain("scoped artifact directory is empty; exported latest workspace files instead");
+    expect(result.scopeKind).toBe("task");
+    expect(result.artifactScope).toBe(prepared.artifactScope);
+    expect(result.artifacts).toEqual([]);
+    expect(result.warnings).toEqual([]);
   });
 
-  it("falls back to latest session task files when requested", async () => {
+  it("does not borrow previous session task files when current task scope is empty", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
     const previousTask = await prepareXWorkmateArtifacts({
       params: { sessionKey: "thread-main", runId: "turn-previous" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "turn-follow-up" },
       pluginConfig: { workspaceDir: root },
     });
     await fs.writeFile(path.join(previousTask.artifactDirectory, "k8s-networking.pdf"), "pdf");
@@ -269,55 +269,57 @@ describe("exportXWorkmateArtifacts", () => {
         sessionKey: "thread-main",
         runId: "turn-follow-up",
         sinceUnixMs: Date.now() + 10_000,
-        latestIfEmpty: true,
-        latestTaskScopeIfEmpty: true,
       },
       pluginConfig: { workspaceDir: root },
     });
 
-    expect(result.scopeKind).toBe("workspace-latest");
-    expect(result.artifactScope).toBeUndefined();
-    expect(result.artifacts.map((entry) => entry.relativePath)).toEqual([
-      "k8s-networking.docx",
-      "k8s-networking.pdf",
-    ]);
-    expect(
-      result.artifacts.map((entry) => ({
-        artifactScope: entry.artifactScope,
-        scopeKind: entry.scopeKind,
-      })),
-    ).toEqual([
-      { artifactScope: previousTask.artifactScope, scopeKind: "task" },
-      { artifactScope: previousTask.artifactScope, scopeKind: "task" },
-    ]);
-    expect(result.warnings).toContain("scoped artifact directory is empty; exported latest session task files instead");
+    expect(result.scopeKind).toBe("task");
+    expect(result.artifactScope).toBe("tasks/thread-main/turn-follow-up");
+    expect(result.artifacts).toEqual([]);
+    expect(result.warnings).toEqual([]);
   });
 
-  it("does not include another session in latest session task fallback", async () => {
+  it("exports concurrent task scopes independently", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
-    const sameSessionTask = await prepareXWorkmateArtifacts({
-      params: { sessionKey: "thread-main", runId: "turn-previous" },
-      pluginConfig: { workspaceDir: root },
-    });
-    const otherSessionTask = await prepareXWorkmateArtifacts({
-      params: { sessionKey: "thread-other", runId: "turn-previous" },
-      pluginConfig: { workspaceDir: root },
-    });
-    await fs.writeFile(path.join(sameSessionTask.artifactDirectory, "same.txt"), "same");
-    await fs.writeFile(path.join(otherSessionTask.artifactDirectory, "other.txt"), "other");
+    const prepared = await Promise.all([
+      prepareXWorkmateArtifacts({
+        params: { sessionKey: "thread-a", runId: "turn-1" },
+        pluginConfig: { workspaceDir: root },
+      }),
+      prepareXWorkmateArtifacts({
+        params: { sessionKey: "thread-b", runId: "turn-1" },
+        pluginConfig: { workspaceDir: root },
+      }),
+      prepareXWorkmateArtifacts({
+        params: { sessionKey: "thread-a", runId: "turn-2" },
+        pluginConfig: { workspaceDir: root },
+      }),
+    ]);
+    await fs.writeFile(path.join(prepared[0].artifactDirectory, "a-1.txt"), "a1");
+    await fs.writeFile(path.join(prepared[1].artifactDirectory, "b-1.txt"), "b1");
+    await fs.writeFile(path.join(prepared[2].artifactDirectory, "a-2.txt"), "a2");
 
-    const result = await exportXWorkmateArtifacts({
-      params: {
-        sessionKey: "thread-main",
-        runId: "turn-follow-up",
-        latestIfEmpty: true,
-        latestTaskScopeIfEmpty: true,
-      },
-      pluginConfig: { workspaceDir: root },
-    });
+    const results = await Promise.all([
+      exportXWorkmateArtifacts({
+        params: { sessionKey: "thread-a", runId: "turn-1" },
+        pluginConfig: { workspaceDir: root },
+      }),
+      exportXWorkmateArtifacts({
+        params: { sessionKey: "thread-b", runId: "turn-1" },
+        pluginConfig: { workspaceDir: root },
+      }),
+      exportXWorkmateArtifacts({
+        params: { sessionKey: "thread-a", runId: "turn-2" },
+        pluginConfig: { workspaceDir: root },
+      }),
+    ]);
 
-    expect(result.artifacts.map((entry) => entry.relativePath)).toEqual(["same.txt"]);
-    expect(result.artifacts[0]?.artifactScope).toBe(sameSessionTask.artifactScope);
+    expect(results.map((result) => result.artifacts.map((entry) => entry.relativePath))).toEqual([
+      ["a-1.txt"],
+      ["b-1.txt"],
+      ["a-2.txt"],
+    ]);
+    expect(results.map((result) => result.artifactScope)).toEqual(prepared.map((entry) => entry.artifactScope));
   });
 
   it("leaves oversized artifacts out of inline content", async () => {
@@ -511,59 +513,19 @@ describe("exportXWorkmateArtifacts", () => {
     ).rejects.toThrow("artifactRef does not match sessionKey/runId");
   });
 
-  it("reads a latest workspace artifact only through its artifactRef", async () => {
+  it("rejects signed task artifact refs from another run", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
     const prepared = await prepareXWorkmateArtifacts({
       params: { sessionKey: "thread-main", runId: "turn-1" },
       pluginConfig: { workspaceDir: root },
     });
-    await fs.writeFile(path.join(root, "existing.txt"), "existing");
+    await fs.writeFile(path.join(prepared.artifactDirectory, "existing.txt"), "existing");
 
     const exported = await exportXWorkmateArtifacts({
       params: {
         sessionKey: "thread-main",
         runId: "turn-1",
         artifactScope: prepared.artifactScope,
-        sinceUnixMs: Date.now() + 10_000,
-        latestIfEmpty: true,
-      },
-      pluginConfig: { workspaceDir: root },
-    });
-
-    const result = await readXWorkmateArtifact({
-      params: {
-        sessionKey: "thread-main",
-        runId: "turn-1",
-        artifactRef: exported.artifacts[0]?.artifactRef,
-      },
-      pluginConfig: { workspaceDir: root },
-    });
-
-    expect(result.scopeKind).toBe("workspace-latest");
-    expect(result.artifactScope).toBeUndefined();
-    expect(result.artifacts[0]).toMatchObject({
-      relativePath: "existing.txt",
-      scopeKind: "workspace-latest",
-      encoding: "base64",
-      content: Buffer.from("existing").toString("base64"),
-    });
-  });
-
-  it("rejects latest workspace artifact refs from another run", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
-    const prepared = await prepareXWorkmateArtifacts({
-      params: { sessionKey: "thread-main", runId: "turn-1" },
-      pluginConfig: { workspaceDir: root },
-    });
-    await fs.writeFile(path.join(root, "existing.txt"), "existing");
-
-    const exported = await exportXWorkmateArtifacts({
-      params: {
-        sessionKey: "thread-main",
-        runId: "turn-1",
-        artifactScope: prepared.artifactScope,
-        sinceUnixMs: Date.now() + 10_000,
-        latestIfEmpty: true,
       },
       pluginConfig: { workspaceDir: root },
     });
@@ -616,7 +578,7 @@ describe("exportXWorkmateArtifacts", () => {
       JSON.stringify({
         v: 1,
         workspaceRootHash: createHash("sha256").update(path.resolve(root)).digest("hex"),
-        scopeKind: "workspace-latest",
+        scopeKind: "task",
         relativePath: "existing.txt",
         sizeBytes: 8,
         sha256: createHash("sha256").update("existing").digest("hex"),

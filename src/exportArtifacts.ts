@@ -34,7 +34,7 @@ export type XWorkmateArtifact = {
   content?: string;
 };
 
-export type XWorkmateArtifactScopeKind = "task" | "workspace" | "workspace-latest";
+export type XWorkmateArtifactScopeKind = "task";
 
 export type XWorkmateArtifactExport = {
   runId: string;
@@ -140,8 +140,6 @@ export async function exportXWorkmateArtifacts(input: ExportInput): Promise<XWor
   );
   const sinceUnixMs = nonNegativeNumber(params.sinceUnixMs, 0);
   const includeContent = optionalBoolean(params.includeContent, true);
-  const latestIfEmpty = optionalBoolean(params.latestIfEmpty, false);
-  const latestTaskScopeIfEmpty = optionalBoolean(params.latestTaskScopeIfEmpty, false);
   const workspaceDir = resolveWorkspaceDir({
     config: input.config,
     pluginConfig,
@@ -158,41 +156,14 @@ export async function exportXWorkmateArtifacts(input: ExportInput): Promise<XWor
   const sessionScope = taskSessionScopeFor(sessionKey);
   const artifactScope = requestedArtifactScope || expectedArtifactScope;
   const scopeRoot = resolveScopeRoot(workspaceRoot, artifactScope);
-  let scopeKind: XWorkmateArtifactScopeKind = "task";
-  let candidates = await collectCandidates({
+  const scopeKind: XWorkmateArtifactScopeKind = "task";
+  const candidates = await collectCandidates({
     scanRoot: scopeRoot,
     relativeRoot: scopeRoot,
     sinceUnixMs,
     skipTaskScopeRoot: false,
     warnings,
   });
-
-  if (candidates.length === 0 && latestIfEmpty) {
-    const latestWarnings: string[] = [];
-    const latestCandidates = latestTaskScopeIfEmpty
-      ? await collectLatestSessionTaskCandidates({
-          workspaceRoot,
-          sessionKey,
-          warnings: latestWarnings,
-        })
-      : await collectCandidates({
-          scanRoot: workspaceRoot,
-          relativeRoot: workspaceRoot,
-          sinceUnixMs: 0,
-          skipTaskScopeRoot: true,
-          warnings: latestWarnings,
-        });
-    if (latestCandidates.length > 0) {
-      warnings.push(...latestWarnings);
-      if (latestTaskScopeIfEmpty) {
-        warnings.push("scoped artifact directory is empty; exported latest session task files instead");
-      } else {
-        warnings.push("scoped artifact directory is empty; exported latest workspace files instead");
-      }
-      candidates = latestCandidates;
-      scopeKind = "workspace-latest";
-    }
-  }
 
   candidates.sort((left, right) => {
     if (right.mtimeMs !== left.mtimeMs) {
@@ -225,9 +196,7 @@ export async function exportXWorkmateArtifacts(input: ExportInput): Promise<XWor
           scopeKind: scopeKindForCandidate,
           sessionScope,
           runScope: expectedArtifactScope,
-          ...(scopeKindForCandidate === "task" && artifactScopeForCandidate
-            ? { artifactScope: artifactScopeForCandidate }
-            : {}),
+          ...(artifactScopeForCandidate ? { artifactScope: artifactScopeForCandidate } : {}),
           relativePath: candidate.relativePath,
           sizeBytes: bytes.byteLength,
           sha256,
@@ -236,7 +205,7 @@ export async function exportXWorkmateArtifacts(input: ExportInput): Promise<XWor
       ),
       scopeKind: scopeKindForCandidate,
     };
-    if (scopeKindForCandidate === "task" && artifactScopeForCandidate) {
+    if (artifactScopeForCandidate) {
       artifact.artifactScope = artifactScopeForCandidate;
     }
     if (includeContent && bytes.byteLength <= maxInlineBytes) {
@@ -253,7 +222,7 @@ export async function exportXWorkmateArtifacts(input: ExportInput): Promise<XWor
     sessionKey,
     remoteWorkingDirectory: workspaceRoot,
     remoteWorkspaceRefKind: "remotePath" as const,
-    ...(scopeKind === "task" ? { artifactScope } : {}),
+    artifactScope,
     scopeKind,
     artifacts,
     warnings,
@@ -302,18 +271,12 @@ export async function readXWorkmateArtifact(input: ReadInput): Promise<XWorkmate
     if (requestedScope && requestedScope !== artifactScope) {
       throw new Error("artifactRef does not match artifactScope");
     }
-    if (refPayload.scopeKind === "task") {
-      assertArtifactScopeMatchesRequest(artifactScope, expectedArtifactScope, expectedSessionScope, {
-        allowSameSessionTaskHistory: true,
-      });
-    }
+    assertArtifactScopeMatchesRequest(artifactScope, expectedArtifactScope);
   } else {
     if (!artifactScope) {
       throw new Error("artifactScope or artifactRef required");
     }
-    assertArtifactScopeMatchesRequest(artifactScope, expectedArtifactScope, expectedSessionScope, {
-      allowSameSessionTaskHistory: false,
-    });
+    assertArtifactScopeMatchesRequest(artifactScope, expectedArtifactScope);
     relativePath = safeInputRelativePath(params.relativePath, "relativePath");
   }
   const scopeRoot = artifactScope ? resolveScopeRoot(workspaceRoot, artifactScope) : workspaceRoot;
@@ -484,49 +447,6 @@ async function collectCandidates(input: {
   }
 }
 
-async function collectLatestSessionTaskCandidates(input: {
-  workspaceRoot: string;
-  sessionKey: string;
-  warnings: string[];
-}): Promise<Candidate[]> {
-  const sessionScope = taskSessionScopeFor(input.sessionKey);
-  const sessionRoot = path.join(input.workspaceRoot, sessionScope.split("/").join(path.sep));
-  let entries;
-  try {
-    entries = await fs.readdir(sessionRoot, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  const candidates: Candidate[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name === "." || entry.name === "..") {
-      continue;
-    }
-    const artifactScope = [sessionScope, entry.name].join("/");
-    let scopeRoot: string;
-    try {
-      scopeRoot = resolveScopeRoot(input.workspaceRoot, artifactScope);
-    } catch {
-      continue;
-    }
-    const scopedCandidates = await collectCandidates({
-      scanRoot: scopeRoot,
-      relativeRoot: scopeRoot,
-      sinceUnixMs: 0,
-      skipTaskScopeRoot: false,
-      warnings: input.warnings,
-    });
-    candidates.push(
-      ...scopedCandidates.map((candidate) => ({
-        ...candidate,
-        artifactScope,
-        scopeKind: "task" as const,
-      })),
-    );
-  }
-  return candidates;
-}
-
 function artifactScopeFor(sessionKey: string, runId: string): string {
   return [taskSessionScopeFor(sessionKey), safeScopeSegment(runId)].join("/");
 }
@@ -538,13 +458,8 @@ function taskSessionScopeFor(sessionKey: string): string {
 function assertArtifactScopeMatchesRequest(
   artifactScope: string,
   expectedArtifactScope: string,
-  expectedSessionScope: string,
-  options: { allowSameSessionTaskHistory: boolean },
 ): void {
   if (artifactScope === expectedArtifactScope) {
-    return;
-  }
-  if (options.allowSameSessionTaskHistory && artifactScope.startsWith(`${expectedSessionScope}/`)) {
     return;
   }
   throw new Error("artifactScope does not match sessionKey/runId");
@@ -822,15 +737,12 @@ function verifyArtifactRef(
   }
   const payload = objectRecord(parsed);
   const scopeKind = optionalString(payload.scopeKind) as XWorkmateArtifactScopeKind;
-  if (!["task", "workspace", "workspace-latest"].includes(scopeKind)) {
+  if (scopeKind !== "task") {
     throw new Error("invalid artifactRef");
   }
   const relativePath = safeInputRelativePath(payload.relativePath, "artifactRef relativePath");
   const artifactScope = optionalArtifactScope(payload.artifactScope);
   if (scopeKind === "task" && !artifactScope) {
-    throw new Error("invalid artifactRef");
-  }
-  if (scopeKind !== "task" && artifactScope) {
     throw new Error("invalid artifactRef");
   }
   const sizeBytes = nonNegativeInteger(payload.sizeBytes, undefined, -1);

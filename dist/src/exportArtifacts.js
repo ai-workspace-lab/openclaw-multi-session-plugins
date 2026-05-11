@@ -59,8 +59,6 @@ export async function exportXWorkmateArtifacts(input) {
     const maxInlineBytes = nonNegativeInteger(params.maxInlineBytes, pluginConfig.maxInlineBytes, DEFAULT_MAX_INLINE_BYTES);
     const sinceUnixMs = nonNegativeNumber(params.sinceUnixMs, 0);
     const includeContent = optionalBoolean(params.includeContent, true);
-    const latestIfEmpty = optionalBoolean(params.latestIfEmpty, false);
-    const latestTaskScopeIfEmpty = optionalBoolean(params.latestTaskScopeIfEmpty, false);
     const workspaceDir = resolveWorkspaceDir({
         config: input.config,
         pluginConfig,
@@ -77,41 +75,14 @@ export async function exportXWorkmateArtifacts(input) {
     const sessionScope = taskSessionScopeFor(sessionKey);
     const artifactScope = requestedArtifactScope || expectedArtifactScope;
     const scopeRoot = resolveScopeRoot(workspaceRoot, artifactScope);
-    let scopeKind = "task";
-    let candidates = await collectCandidates({
+    const scopeKind = "task";
+    const candidates = await collectCandidates({
         scanRoot: scopeRoot,
         relativeRoot: scopeRoot,
         sinceUnixMs,
         skipTaskScopeRoot: false,
         warnings,
     });
-    if (candidates.length === 0 && latestIfEmpty) {
-        const latestWarnings = [];
-        const latestCandidates = latestTaskScopeIfEmpty
-            ? await collectLatestSessionTaskCandidates({
-                workspaceRoot,
-                sessionKey,
-                warnings: latestWarnings,
-            })
-            : await collectCandidates({
-                scanRoot: workspaceRoot,
-                relativeRoot: workspaceRoot,
-                sinceUnixMs: 0,
-                skipTaskScopeRoot: true,
-                warnings: latestWarnings,
-            });
-        if (latestCandidates.length > 0) {
-            warnings.push(...latestWarnings);
-            if (latestTaskScopeIfEmpty) {
-                warnings.push("scoped artifact directory is empty; exported latest session task files instead");
-            }
-            else {
-                warnings.push("scoped artifact directory is empty; exported latest workspace files instead");
-            }
-            candidates = latestCandidates;
-            scopeKind = "workspace-latest";
-        }
-    }
     candidates.sort((left, right) => {
         if (right.mtimeMs !== left.mtimeMs) {
             return right.mtimeMs - left.mtimeMs;
@@ -140,16 +111,14 @@ export async function exportXWorkmateArtifacts(input) {
                 scopeKind: scopeKindForCandidate,
                 sessionScope,
                 runScope: expectedArtifactScope,
-                ...(scopeKindForCandidate === "task" && artifactScopeForCandidate
-                    ? { artifactScope: artifactScopeForCandidate }
-                    : {}),
+                ...(artifactScopeForCandidate ? { artifactScope: artifactScopeForCandidate } : {}),
                 relativePath: candidate.relativePath,
                 sizeBytes: bytes.byteLength,
                 sha256,
             }, pluginConfig),
             scopeKind: scopeKindForCandidate,
         };
-        if (scopeKindForCandidate === "task" && artifactScopeForCandidate) {
+        if (artifactScopeForCandidate) {
             artifact.artifactScope = artifactScopeForCandidate;
         }
         if (includeContent && bytes.byteLength <= maxInlineBytes) {
@@ -166,7 +135,7 @@ export async function exportXWorkmateArtifacts(input) {
         sessionKey,
         remoteWorkingDirectory: workspaceRoot,
         remoteWorkspaceRefKind: "remotePath",
-        ...(scopeKind === "task" ? { artifactScope } : {}),
+        artifactScope,
         scopeKind,
         artifacts,
         warnings,
@@ -210,19 +179,13 @@ export async function readXWorkmateArtifact(input) {
         if (requestedScope && requestedScope !== artifactScope) {
             throw new Error("artifactRef does not match artifactScope");
         }
-        if (refPayload.scopeKind === "task") {
-            assertArtifactScopeMatchesRequest(artifactScope, expectedArtifactScope, expectedSessionScope, {
-                allowSameSessionTaskHistory: true,
-            });
-        }
+        assertArtifactScopeMatchesRequest(artifactScope, expectedArtifactScope);
     }
     else {
         if (!artifactScope) {
             throw new Error("artifactScope or artifactRef required");
         }
-        assertArtifactScopeMatchesRequest(artifactScope, expectedArtifactScope, expectedSessionScope, {
-            allowSameSessionTaskHistory: false,
-        });
+        assertArtifactScopeMatchesRequest(artifactScope, expectedArtifactScope);
         relativePath = safeInputRelativePath(params.relativePath, "relativePath");
     }
     const scopeRoot = artifactScope ? resolveScopeRoot(workspaceRoot, artifactScope) : workspaceRoot;
@@ -372,55 +335,14 @@ async function collectCandidates(input) {
         }
     }
 }
-async function collectLatestSessionTaskCandidates(input) {
-    const sessionScope = taskSessionScopeFor(input.sessionKey);
-    const sessionRoot = path.join(input.workspaceRoot, sessionScope.split("/").join(path.sep));
-    let entries;
-    try {
-        entries = await fs.readdir(sessionRoot, { withFileTypes: true });
-    }
-    catch {
-        return [];
-    }
-    const candidates = [];
-    for (const entry of entries) {
-        if (!entry.isDirectory() || entry.name === "." || entry.name === "..") {
-            continue;
-        }
-        const artifactScope = [sessionScope, entry.name].join("/");
-        let scopeRoot;
-        try {
-            scopeRoot = resolveScopeRoot(input.workspaceRoot, artifactScope);
-        }
-        catch {
-            continue;
-        }
-        const scopedCandidates = await collectCandidates({
-            scanRoot: scopeRoot,
-            relativeRoot: scopeRoot,
-            sinceUnixMs: 0,
-            skipTaskScopeRoot: false,
-            warnings: input.warnings,
-        });
-        candidates.push(...scopedCandidates.map((candidate) => ({
-            ...candidate,
-            artifactScope,
-            scopeKind: "task",
-        })));
-    }
-    return candidates;
-}
 function artifactScopeFor(sessionKey, runId) {
     return [taskSessionScopeFor(sessionKey), safeScopeSegment(runId)].join("/");
 }
 function taskSessionScopeFor(sessionKey) {
     return [TASK_SCOPE_ROOT, safeScopeSegment(sessionKey)].join("/");
 }
-function assertArtifactScopeMatchesRequest(artifactScope, expectedArtifactScope, expectedSessionScope, options) {
+function assertArtifactScopeMatchesRequest(artifactScope, expectedArtifactScope) {
     if (artifactScope === expectedArtifactScope) {
-        return;
-    }
-    if (options.allowSameSessionTaskHistory && artifactScope.startsWith(`${expectedSessionScope}/`)) {
         return;
     }
     throw new Error("artifactScope does not match sessionKey/runId");
@@ -664,15 +586,12 @@ function verifyArtifactRef(artifactRef, workspaceRoot, pluginConfig) {
     }
     const payload = objectRecord(parsed);
     const scopeKind = optionalString(payload.scopeKind);
-    if (!["task", "workspace", "workspace-latest"].includes(scopeKind)) {
+    if (scopeKind !== "task") {
         throw new Error("invalid artifactRef");
     }
     const relativePath = safeInputRelativePath(payload.relativePath, "artifactRef relativePath");
     const artifactScope = optionalArtifactScope(payload.artifactScope);
     if (scopeKind === "task" && !artifactScope) {
-        throw new Error("invalid artifactRef");
-    }
-    if (scopeKind !== "task" && artifactScope) {
         throw new Error("invalid artifactRef");
     }
     const sizeBytes = nonNegativeInteger(payload.sizeBytes, undefined, -1);

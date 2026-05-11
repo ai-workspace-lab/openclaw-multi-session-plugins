@@ -100,7 +100,7 @@ function createXWorkmateArtifactsTool(api, ctx) {
                 },
                 artifactRef: {
                     type: "string",
-                    description: "Plugin-signed artifact reference returned by export/list. Required for workspace-latest reads.",
+                    description: "Plugin-signed artifact reference returned by export/list. Bound to the issuing task scope.",
                 },
                 sinceUnixMs: {
                     type: "number",

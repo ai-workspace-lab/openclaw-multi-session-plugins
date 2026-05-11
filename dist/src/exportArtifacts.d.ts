@@ -10,7 +10,7 @@ export type XWorkmateArtifact = {
     encoding?: "base64";
     content?: string;
 };
-export type XWorkmateArtifactScopeKind = "task" | "workspace" | "workspace-latest";
+export type XWorkmateArtifactScopeKind = "task";
 export type XWorkmateArtifactExport = {
     runId: string;
     sessionKey: string;

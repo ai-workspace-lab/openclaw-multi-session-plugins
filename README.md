@@ -106,7 +106,6 @@ Export request params:
   "runId": "turn-1",
   "artifactScope": "tasks/thread-main-.../turn-1-...",
   "sinceUnixMs": 1770000000000,
-  "latestIfEmpty": true,
   "maxFiles": 64,
   "maxInlineBytes": 10485760
 }
@@ -140,20 +139,15 @@ Export response payload:
 
 Files at or below `maxInlineBytes` also include `encoding: "base64"` and `content`.
 When `artifactScope` is omitted, export/list defaults to the current task scope
-derived from `sessionKey/runId`. When that current task scope has no files and
-`latestIfEmpty` is true, the plugin scans the workspace root for the latest real
-files and returns them with `scopeKind: "workspace-latest"`. This is a controlled
-recovery path for existing files already present in `/home/ubuntu/.openclaw/workspace`;
-it still skips plugin metadata and runtime directories, including the top-level
-`tasks/` directory so other runs are not exported as workspace fallback files.
+derived from `sessionKey/runId`. If that scope has no files, export/list returns
+an empty artifact list. The plugin does not scan the workspace root and does not
+borrow artifacts from earlier task scopes.
 
 Each exported artifact includes `artifactRef`, a plugin-signed reference over
 the issued session/run scope, artifact scope, path, size, and SHA-256 digest. `read` accepts
 `artifactScope + relativePath` for the current `sessionKey/runId` task scope.
-Signed task `artifactRef` values are accepted for the current session, including
-same-session historical task fallback results returned by the plugin. Workspace
-fallback files must be read with a same-session and same-run `artifactRef`; there
-is no unscoped arbitrary workspace read API.
+Signed task `artifactRef` values are accepted only for the same `sessionKey/runId`
+that issued them. There is no unscoped arbitrary workspace read API.
 
 ## View And Download
 
@@ -185,7 +179,7 @@ Gateway clients can use:
 - `xworkmate.artifacts.prepare` before `chat.send` to allocate a task artifact directory.
 - `xworkmate.artifacts.list` for a metadata-only manifest and Markdown table.
 - `xworkmate.artifacts.read` with `artifactScope` and `relativePath` for one task file.
-- `xworkmate.artifacts.read` with `artifactRef` for a plugin-returned task or `workspace-latest` file.
+- `xworkmate.artifacts.read` with `artifactRef` for a plugin-returned task file.
 - `xworkmate.artifacts.export` with `artifactScope` after `agent.wait` for the XWorkmate APP sync path.
 
 Large files are metadata-only in the export payload, but XWorkmate Bridge can
@@ -195,8 +189,7 @@ only remote file access path.
 ## Limits
 
 - Only files inside the resolved OpenClaw workspace are exported.
-- `.git`, `.openclaw`, `.xworkmate`, `.pi`, build outputs, and dependency folders are skipped when scanning the workspace root.
-- Top-level `tasks/` is skipped during workspace fallback scanning.
+- `.git`, `.openclaw`, `.xworkmate`, `.pi`, build outputs, and dependency folders are excluded from task artifact exports.
 - Symlinks are skipped to avoid workspace escape.
 - Files larger than `maxInlineBytes` are listed with metadata and a warning, but are not inlined.
 - `artifactScope` must be `tasks/<safe-session-key>/<safe-run-id>`.
