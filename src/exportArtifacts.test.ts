@@ -194,6 +194,8 @@ describe("exportXWorkmateArtifacts", () => {
 
     expect(result.scopeKind).toBe("task");
     expect(result.artifacts).toEqual([]);
+    expect(result.manifestMarkdown).toContain("No artifacts found for this task run.");
+    expect(result.manifestMarkdown).toContain("Artifact scope: `tasks/thread-main/turn-1`");
   });
 
   it("rejects scoped exports that do not match the requested session/run", async () => {

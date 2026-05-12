@@ -87,7 +87,7 @@ export async function exportXWorkmateArtifacts(input) {
         })
         : [];
     if (!scopePrepared) {
-        warnings.push("artifact scope is not prepared");
+        warnings.push("artifact scope is not prepared for this task run");
     }
     candidates.sort((left, right) => {
         if (right.mtimeMs !== left.mtimeMs) {
@@ -265,7 +265,7 @@ export function formatArtifactManifestMarkdown(input) {
         "",
     ];
     if (input.artifacts.length === 0) {
-        lines.push("No artifacts found.");
+        lines.push("No artifacts found for this task run.");
     }
     else {
         lines.push("| File | Type | Size | SHA-256 | Inline |");

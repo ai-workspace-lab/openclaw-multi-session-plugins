@@ -114,7 +114,8 @@ describe("plugin registration", () => {
     });
     expect(unprepared.ok).toBe(true);
     expect(unprepared.payload?.artifacts).toEqual([]);
-    expect(unprepared.payload?.warnings).toEqual(["artifact scope is not prepared"]);
+    expect(unprepared.payload?.warnings).toEqual(["artifact scope is not prepared for this task run"]);
+    expect(unprepared.payload?.manifestMarkdown).toContain("No artifacts found for this task run.");
   });
 
   it("does not invent default session or run ids for the optional agent tool", async () => {

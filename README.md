@@ -140,8 +140,9 @@ Export response payload:
 Files at or below `maxInlineBytes` also include `encoding: "base64"` and `content`.
 When `artifactScope` is omitted, export/list defaults to the current task scope
 derived from `sessionKey/runId`. If that scope has no files, export/list returns
-an empty artifact list. The plugin does not scan the workspace root and does not
-borrow artifacts from earlier task scopes.
+an empty artifact list with the manifest text `No artifacts found for this task
+run.` The plugin does not scan the workspace root and does not borrow artifacts
+from earlier task scopes.
 
 Each exported artifact includes `artifactRef`, a plugin-signed reference over
 the issued session/run scope, artifact scope, path, size, and SHA-256 digest. `read` accepts
