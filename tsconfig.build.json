@@ -7,5 +7,5 @@
     "outDir": "dist",
     "rootDir": "."
   },
-  "include": ["index.ts", "src/exportArtifacts.ts"]
+  "include": ["index.ts", "src/exportArtifacts.ts", "src/bridgeAgents.ts"]
 }

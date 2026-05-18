@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
@@ -21,11 +22,15 @@ describe("plugin registration", () => {
     };
 
     expect(manifest.contracts?.tools).toContain("openclaw_multi_session_artifacts");
+    expect(manifest.contracts?.tools).toContain("openclaw_multi_session_agents");
     expect(manifest.contracts?.sessionScopedTools).toContain("openclaw_multi_session_artifacts");
+    expect(manifest.contracts?.sessionScopedTools).toContain("openclaw_multi_session_agents");
     expect(manifest.configSchema?.properties?.artifactRefSigningSecret).toBeTruthy();
+    expect(manifest.configSchema?.properties?.bridgeUrl).toBeTruthy();
+    expect(manifest.configSchema?.properties?.bridgeToken).toBeTruthy();
   });
 
-  it("registers the xworkmate artifact gateway methods and optional tool", () => {
+  it("registers the xworkmate gateway methods and optional tools", () => {
     const methods: Array<{ method: string; handler: GatewayMethodHandler }> = [];
     const tools: Array<{ tool: unknown; options: unknown }> = [];
     const api = {
@@ -46,11 +51,16 @@ describe("plugin registration", () => {
       "xworkmate.artifacts.export",
       "xworkmate.artifacts.list",
       "xworkmate.artifacts.read",
+      "xworkmate.agents.run",
     ]);
     expect(methods.every((entry) => typeof entry.handler === "function")).toBe(true);
-    expect(tools).toHaveLength(1);
+    expect(tools).toHaveLength(2);
     expect(tools[0]?.options).toMatchObject({
       names: ["openclaw_multi_session_artifacts"],
+      optional: true,
+    });
+    expect(tools[1]?.options).toMatchObject({
+      names: ["openclaw_multi_session_agents"],
       optional: true,
     });
   });
@@ -144,6 +154,160 @@ describe("plugin registration", () => {
     await expect(factory({ sessionKey: "thread-main" }).execute("call-2", { action: "list" })).rejects.toThrow(
       "runId required",
     );
+  });
+
+  it("does not expose session scope controls on the bridge agents tool", async () => {
+    const tools: Array<{ tool: unknown; options: { names?: string[] } }> = [];
+    const api = {
+      config: {},
+      pluginConfig: {},
+      registerGatewayMethod: () => undefined,
+      registerTool: (tool: unknown, options: { names?: string[] }) => {
+        tools.push({ tool, options });
+      },
+    } as unknown as OpenClawPluginApi;
+
+    plugin.register(api);
+
+    const entry = tools.find((item) => item.options.names?.includes("openclaw_multi_session_agents"));
+    const factory = entry?.tool as (ctx: Record<string, unknown>) => {
+      parameters: { properties?: Record<string, unknown> };
+      execute: (id: string, params: Record<string, unknown>) => Promise<unknown>;
+    };
+    const tool = factory({});
+
+    expect(tool.parameters.properties?.sessionKey).toBeUndefined();
+    expect(tool.parameters.properties?.runId).toBeUndefined();
+    expect(tool.parameters.properties?.workspaceDir).toBeUndefined();
+    await expect(tool.execute("call-1", { taskPrompt: "run", steps: [] })).rejects.toThrow("sessionKey required");
+    await expect(factory({ sessionKey: "thread-main" }).execute("call-2", { taskPrompt: "run", steps: [] })).rejects.toThrow(
+      "runId required",
+    );
+  });
+
+  it("fails closed when bridge token is missing", async () => {
+    const tools: Array<{ tool: unknown; options: { names?: string[] } }> = [];
+    const api = {
+      config: {},
+      pluginConfig: { workspaceDir: await fs.promises.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-agent-token-")), bridgeUrl: "http://127.0.0.1:1" },
+      registerGatewayMethod: () => undefined,
+      registerTool: (tool: unknown, options: { names?: string[] }) => {
+        tools.push({ tool, options });
+      },
+    } as unknown as OpenClawPluginApi;
+
+    plugin.register(api);
+
+    const entry = tools.find((item) => item.options.names?.includes("openclaw_multi_session_agents"));
+    const factory = entry?.tool as (ctx: Record<string, unknown>) => {
+      execute: (id: string, params: Record<string, unknown>) => Promise<unknown>;
+    };
+    const tool = factory({ sessionKey: "thread-main", runId: "turn-1" });
+
+    await expect(
+      tool.execute("call-1", {
+        taskPrompt: "run",
+        steps: [{ providerId: "codex", prompt: "hello" }],
+      }),
+    ).rejects.toThrow("bridgeToken required");
+  });
+
+  it("runs bridge-backed multi-agent work inside the current task artifact scope", async () => {
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-bridge-agents-"));
+    const bridgeRequests: Array<Record<string, unknown>> = [];
+    const bridgeServer = http.createServer((req, res) => {
+      if (req.method !== "POST" || req.url !== "/acp/rpc") {
+        res.statusCode = 404;
+        res.end();
+        return;
+      }
+      expect(req.headers.authorization).toBe("Bearer bridge-token");
+      let body = "";
+      req.on("data", (chunk: Buffer) => {
+        body += chunk.toString("utf8");
+      });
+      req.on("end", () => {
+        const decoded = JSON.parse(body) as Record<string, unknown>;
+        bridgeRequests.push(decoded);
+        res.setHeader("Content-Type", "application/json");
+        res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: decoded.id,
+            result: {
+              success: true,
+              status: "completed",
+              mode: "multi-agent",
+              orchestrationMode: "sequence",
+              summary: "bridge agents done",
+              steps: [{ providerId: "codex", status: "completed", output: "done" }],
+            },
+          }),
+        );
+      });
+    });
+    await new Promise<void>((resolve) => bridgeServer.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = bridgeServer.address();
+      if (!address || typeof address === "string") {
+        throw new Error("missing bridge server address");
+      }
+      const tools: Array<{ tool: unknown; options: { names?: string[] } }> = [];
+      const api = {
+        config: {},
+        pluginConfig: {
+          workspaceDir: root,
+          bridgeUrl: `http://127.0.0.1:${address.port}`,
+          bridgeToken: "bridge-token",
+        },
+        registerGatewayMethod: () => undefined,
+        registerTool: (tool: unknown, options: { names?: string[] }) => {
+          tools.push({ tool, options });
+        },
+      } as unknown as OpenClawPluginApi;
+
+      plugin.register(api);
+
+      const entry = tools.find((item) => item.options.names?.includes("openclaw_multi_session_agents"));
+      const factory = entry?.tool as (ctx: Record<string, unknown>) => {
+        execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }>; details: { artifacts: Array<{ relativePath: string }> } }>;
+      };
+      const tool = factory({ sessionKey: "thread-main", runId: "turn-1", workspaceDir: root });
+      const result = await tool.execute("call-1", {
+        taskPrompt: "coordinate",
+        mode: "sequence",
+        steps: [{ providerId: "codex", prompt: "hello" }],
+        sessionKey: "evil",
+        runId: "evil",
+        workspaceDir: "/",
+      });
+
+      expect(result.content[0]?.text).toContain("bridge agents done");
+      expect(result.details.artifacts).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ relativePath: "multi-agent-result.json" }),
+          expect.objectContaining({ relativePath: "multi-agent-result.md" }),
+        ]),
+      );
+      expect(await fs.promises.readFile(path.join(root, "tasks", "thread-main", "turn-1", "multi-agent-result.md"), "utf8")).toContain(
+        "bridge agents done",
+      );
+      await expect(fs.promises.stat(path.join(root, "tasks", "evil", "evil", "multi-agent-result.md"))).rejects.toThrow();
+      expect(bridgeRequests).toHaveLength(1);
+      const params = bridgeRequests[0]?.params as Record<string, unknown>;
+      expect(params.sessionId).toBe("openclaw:thread-main");
+      expect(params.threadId).toBe("thread-main");
+      expect(params.workingDirectory).toBe(await fs.promises.realpath(path.join(root, "tasks", "thread-main", "turn-1")));
+      expect(params.multiAgent).toBe(true);
+      expect(params.routing).toMatchObject({
+        orchestrationMode: "sequence",
+        steps: [{ providerId: "codex", prompt: "hello" }],
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        bridgeServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
   });
 
   it("uses host context scope for the optional agent tool", async () => {
