@@ -18,6 +18,32 @@ const SKIPPED_DIRS = new Set([
     "dist",
     "node_modules",
 ]);
+const THREAD_DELIVERY_FILE_NAMES = new Set([
+    "DELIVERY.md",
+    "delivery.md",
+    "ffprobe.json",
+    "video.config.json",
+    "index.html",
+]);
+const THREAD_DELIVERY_DIRS = new Set([
+    "renders",
+    "render",
+    "exports",
+    "output",
+    "outputs",
+]);
+const THREAD_DELIVERY_EXTENSIONS = new Set([
+    ".mp4",
+    ".mov",
+    ".webm",
+    ".pdf",
+    ".docx",
+    ".pptx",
+    ".xlsx",
+    ".md",
+    ".html",
+    ".json",
+]);
 export async function prepareXWorkmateArtifacts(input) {
     const params = input.params ?? {};
     const pluginConfig = input.pluginConfig ?? {};
@@ -86,6 +112,7 @@ export async function exportXWorkmateArtifacts(input) {
             relativeRoot: scopeRoot,
             sinceUnixMs,
             skipTaskScopeRoot: false,
+            warnSkippedSymlinks: true,
             warnings,
         })
         : [];
@@ -99,7 +126,17 @@ export async function exportXWorkmateArtifacts(input) {
             warnings,
         })
         : [];
-    const candidates = [...scopedCandidates, ...adoptedCandidates];
+    const threadDeliveryCandidates = sinceUnixMs > 0 && scopedCandidates.length === 0 && adoptedCandidates.length === 0
+        ? await adoptThreadWorkspaceDeliveryCandidatesIntoScope({
+            workspaceRoot,
+            scopeRoot,
+            artifactScope,
+            sessionKey,
+            existingRelativePaths: new Set(scopedCandidates.map((candidate) => candidate.relativePath)),
+            warnings,
+        })
+        : [];
+    const candidates = [...scopedCandidates, ...adoptedCandidates, ...threadDeliveryCandidates];
     if (!scopePrepared && candidates.length === 0) {
         warnings.push("artifact scope is not prepared for this task run");
     }
@@ -302,6 +339,7 @@ async function adoptWorkspaceRootCandidatesIntoScope(input) {
         relativeRoot: input.workspaceRoot,
         sinceUnixMs: input.sinceUnixMs,
         skipTaskScopeRoot: true,
+        warnSkippedSymlinks: false,
         warnings: input.warnings,
     });
     const adopted = [];
@@ -334,6 +372,152 @@ async function adoptWorkspaceRootCandidatesIntoScope(input) {
     }
     return adopted;
 }
+async function adoptThreadWorkspaceDeliveryCandidatesIntoScope(input) {
+    const threadRoots = await resolveCurrentThreadWorkspaceRoots(input.workspaceRoot, input.sessionKey);
+    const adopted = [];
+    for (const threadRoot of threadRoots) {
+        const candidates = await collectThreadDeliveryCandidates({
+            scanRoot: threadRoot,
+            relativeRoot: threadRoot,
+            warnings: input.warnings,
+        });
+        for (const candidate of candidates) {
+            if (input.existingRelativePaths.has(candidate.relativePath)) {
+                continue;
+            }
+            const targetPath = path.join(input.scopeRoot, candidate.relativePath.split("/").join(path.sep));
+            if (!isWithinRoot(input.scopeRoot, targetPath)) {
+                input.warnings.push(`skipped path outside task scope ${candidate.relativePath}`);
+                continue;
+            }
+            if (await fileExists(targetPath)) {
+                input.existingRelativePaths.add(candidate.relativePath);
+                continue;
+            }
+            await fs.mkdir(path.dirname(targetPath), { recursive: true });
+            await fs.copyFile(candidate.absolutePath, targetPath);
+            const stat = await fs.stat(targetPath);
+            const realPath = await fs.realpath(targetPath);
+            adopted.push({
+                absolutePath: realPath,
+                relativePath: candidate.relativePath,
+                sizeBytes: stat.size,
+                mtimeMs: candidate.mtimeMs,
+                artifactScope: input.artifactScope,
+                scopeKind: "task",
+            });
+            input.existingRelativePaths.add(candidate.relativePath);
+        }
+    }
+    return adopted;
+}
+async function resolveCurrentThreadWorkspaceRoots(workspaceRoot, sessionKey) {
+    const roots = new Set();
+    const realWorkspaceRoot = await fs.realpath(workspaceRoot);
+    if (path.basename(realWorkspaceRoot) === sessionKey) {
+        roots.add(realWorkspaceRoot);
+    }
+    const ownerRoots = [
+        path.join(realWorkspaceRoot, "owners", "local", "user"),
+        path.join(realWorkspaceRoot, "owners", "remote", "user"),
+    ];
+    for (const ownerRoot of ownerRoots) {
+        if (!(await directoryExists(ownerRoot))) {
+            continue;
+        }
+        let ownerEntries;
+        try {
+            ownerEntries = await fs.readdir(ownerRoot, { withFileTypes: true });
+        }
+        catch {
+            continue;
+        }
+        for (const ownerEntry of ownerEntries) {
+            if (!ownerEntry.isDirectory()) {
+                continue;
+            }
+            const candidate = path.join(ownerRoot, ownerEntry.name, "threads", sessionKey);
+            if (!(await directoryExists(candidate))) {
+                continue;
+            }
+            const realCandidate = await fs.realpath(candidate);
+            if (isWithinRoot(realWorkspaceRoot, realCandidate)) {
+                roots.add(realCandidate);
+            }
+        }
+    }
+    return [...roots];
+}
+async function collectThreadDeliveryCandidates(input) {
+    const candidates = [];
+    await walk(input.scanRoot, []);
+    return candidates;
+    async function walk(currentDir, segments) {
+        let entries;
+        try {
+            entries = await fs.readdir(currentDir, { withFileTypes: true });
+        }
+        catch (error) {
+            input.warnings.push(`cannot read ${safeDisplayPath(input.relativeRoot, currentDir)}: ${String(error)}`);
+            return;
+        }
+        entries.sort((left, right) => left.name.localeCompare(right.name));
+        for (const entry of entries) {
+            if (entry.name === "." || entry.name === "..") {
+                continue;
+            }
+            const absolutePath = path.join(currentDir, entry.name);
+            const relativeEntryPath = [...segments, entry.name].join("/");
+            if (entry.isSymbolicLink()) {
+                const isDeliveryPath = isThreadDeliveryFile(relativeEntryPath) || THREAD_DELIVERY_DIRS.has(segments[0] ?? entry.name);
+                if (isDeliveryPath) {
+                    input.warnings.push(`skipped symlink ${safeDisplayPath(input.relativeRoot, absolutePath)}`);
+                }
+                continue;
+            }
+            if (entry.isDirectory()) {
+                if (segments.length === 0 && !THREAD_DELIVERY_DIRS.has(entry.name)) {
+                    continue;
+                }
+                if (SKIPPED_DIRS.has(entry.name)) {
+                    continue;
+                }
+                await walk(absolutePath, [...segments, entry.name]);
+                continue;
+            }
+            if (!entry.isFile()) {
+                continue;
+            }
+            const relativePath = safeRelativePath(input.relativeRoot, absolutePath);
+            if (!relativePath || !isThreadDeliveryFile(relativePath)) {
+                continue;
+            }
+            const stat = await fs.stat(absolutePath);
+            const realPath = await fs.realpath(absolutePath);
+            if (!isWithinRoot(input.relativeRoot, realPath)) {
+                input.warnings.push(`skipped path outside workspace ${entry.name}`);
+                continue;
+            }
+            candidates.push({
+                absolutePath: realPath,
+                relativePath,
+                sizeBytes: stat.size,
+                mtimeMs: Math.max(stat.mtimeMs, stat.ctimeMs),
+            });
+        }
+    }
+}
+function isThreadDeliveryFile(relativePath) {
+    const parts = relativePath.split("/");
+    const fileName = parts[parts.length - 1] ?? "";
+    if (parts.length === 1) {
+        return THREAD_DELIVERY_FILE_NAMES.has(fileName);
+    }
+    if (!THREAD_DELIVERY_DIRS.has(parts[0] ?? "")) {
+        return false;
+    }
+    return THREAD_DELIVERY_EXTENSIONS.has(path.extname(fileName).toLowerCase());
+}
 async function collectCandidates(input) {
     const candidates = [];
     await walk(input.scanRoot);
@@ -354,7 +538,9 @@ async function collectCandidates(input) {
             }
             const absolutePath = path.join(currentDir, entry.name);
             if (entry.isSymbolicLink()) {
-                input.warnings.push(`skipped symlink ${safeDisplayPath(input.relativeRoot, absolutePath)}`);
+                if (input.warnSkippedSymlinks) {
+                    input.warnings.push(`skipped symlink ${safeDisplayPath(input.relativeRoot, absolutePath)}`);
+                }
                 continue;
             }
             if (entry.isDirectory()) {
@@ -589,6 +775,12 @@ function contentTypeForPath(relativePath) {
             return "image/gif";
         case ".svg":
             return "image/svg+xml";
+        case ".mp4":
+            return "video/mp4";
+        case ".mov":
+            return "video/quicktime";
+        case ".webm":
+            return "video/webm";
         default:
             return "application/octet-stream";
     }

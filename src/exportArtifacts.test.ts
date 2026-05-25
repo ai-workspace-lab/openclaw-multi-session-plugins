@@ -389,6 +389,104 @@ describe("exportXWorkmateArtifacts", () => {
     expect(result.warnings).toEqual([]);
   });
 
+  it("adopts same-thread delivery files when the prepared task scope is empty", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
+    await prepareXWorkmateArtifacts({
+      params: {
+        sessionKey: "draft:1779524982823421-3",
+        runId: "turn-1779685283403237342",
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+    const threadRoot = path.join(root, "owners", "local", "user", "owner-hash", "threads", "draft:1779524982823421-3");
+    await fs.mkdir(path.join(threadRoot, "renders"), { recursive: true });
+    await fs.writeFile(path.join(threadRoot, "renders", "cloud-native-servicemesh-network.mp4"), "mp4");
+    await fs.writeFile(path.join(threadRoot, "DELIVERY.md"), "delivered");
+    await fs.writeFile(path.join(threadRoot, "scratch.txt"), "scratch");
+    await fs.symlink(threadRoot, path.join(threadRoot, "venv"));
+    await fs.mkdir(path.join(root, "owners", "local", "user", "owner-hash", "threads", "draft:other", "renders"), {
+      recursive: true,
+    });
+    await fs.writeFile(
+      path.join(root, "owners", "local", "user", "owner-hash", "threads", "draft:other", "renders", "other.mp4"),
+      "other",
+    );
+
+    const result = await exportXWorkmateArtifacts({
+      params: {
+        sessionKey: "draft:1779524982823421-3",
+        runId: "turn-1779685283403237342",
+        sinceUnixMs: Date.now() + 10_000,
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+
+    expect(result.artifactScope).toBe("tasks/draft_1779524982823421-3/turn-1779685283403237342");
+    expect(result.artifacts.map((entry) => entry.relativePath).sort()).toEqual([
+      "DELIVERY.md",
+      "renders/cloud-native-servicemesh-network.mp4",
+    ]);
+    expect(result.artifacts.map((entry) => entry.contentType).sort()).toEqual([
+      "text/markdown",
+      "video/mp4",
+    ]);
+    expect(
+      await fs.readFile(
+        path.join(
+          root,
+          "tasks",
+          "draft_1779524982823421-3",
+          "turn-1779685283403237342",
+          "renders",
+          "cloud-native-servicemesh-network.mp4",
+        ),
+        "utf8",
+      ),
+    ).toBe("mp4");
+    await expect(
+      fs.stat(path.join(root, "tasks", "draft_1779524982823421-3", "turn-1779685283403237342", "scratch.txt")),
+    ).rejects.toThrow();
+    await expect(
+      fs.stat(path.join(root, "tasks", "draft_1779524982823421-3", "turn-1779685283403237342", "renders", "other.mp4")),
+    ).rejects.toThrow();
+  });
+
+  it("does not adopt same-thread delivery files without a current-run timestamp", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
+    await prepareXWorkmateArtifacts({
+      params: {
+        sessionKey: "draft:1779524982823421-3",
+        runId: "turn-1779685283403237342",
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+    const threadRoot = path.join(root, "owners", "local", "user", "owner-hash", "threads", "draft:1779524982823421-3");
+    await fs.mkdir(path.join(threadRoot, "renders"), { recursive: true });
+    await fs.writeFile(path.join(threadRoot, "renders", "cloud-native-servicemesh-network.mp4"), "mp4");
+
+    const result = await exportXWorkmateArtifacts({
+      params: {
+        sessionKey: "draft:1779524982823421-3",
+        runId: "turn-1779685283403237342",
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+
+    expect(result.artifacts).toEqual([]);
+    await expect(
+      fs.stat(
+        path.join(
+          root,
+          "tasks",
+          "draft_1779524982823421-3",
+          "turn-1779685283403237342",
+          "renders",
+          "cloud-native-servicemesh-network.mp4",
+        ),
+      ),
+    ).rejects.toThrow();
+  });
+
   it("exports concurrent task scopes independently", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
     const prepared = await Promise.all([
