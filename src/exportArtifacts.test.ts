@@ -400,7 +400,13 @@ describe("exportXWorkmateArtifacts", () => {
     });
     const threadRoot = path.join(root, "owners", "local", "user", "owner-hash", "threads", "draft:1779524982823421-3");
     await fs.mkdir(path.join(threadRoot, "renders"), { recursive: true });
+    await fs.mkdir(path.join(threadRoot, "assets", "images", "security-identity-evolution"), { recursive: true });
     await fs.writeFile(path.join(threadRoot, "renders", "cloud-native-servicemesh-network.mp4"), "mp4");
+    await fs.writeFile(
+      path.join(threadRoot, "assets", "images", "security-identity-evolution", "001-local-permission.png"),
+      "png",
+    );
+    await fs.writeFile(path.join(threadRoot, "assets", "images", "manifest.md"), "manifest");
     await fs.writeFile(path.join(threadRoot, "DELIVERY.md"), "delivered");
     await fs.writeFile(path.join(threadRoot, "scratch.txt"), "scratch");
     await fs.symlink(threadRoot, path.join(threadRoot, "venv"));
@@ -424,9 +430,13 @@ describe("exportXWorkmateArtifacts", () => {
     expect(result.artifactScope).toBe("tasks/draft_1779524982823421-3/turn-1779685283403237342");
     expect(result.artifacts.map((entry) => entry.relativePath).sort()).toEqual([
       "DELIVERY.md",
+      "assets/images/manifest.md",
+      "assets/images/security-identity-evolution/001-local-permission.png",
       "renders/cloud-native-servicemesh-network.mp4",
     ]);
     expect(result.artifacts.map((entry) => entry.contentType).sort()).toEqual([
+      "image/png",
+      "text/markdown",
       "text/markdown",
       "video/mp4",
     ]);
@@ -443,6 +453,21 @@ describe("exportXWorkmateArtifacts", () => {
         "utf8",
       ),
     ).toBe("mp4");
+    expect(
+      await fs.readFile(
+        path.join(
+          root,
+          "tasks",
+          "draft_1779524982823421-3",
+          "turn-1779685283403237342",
+          "assets",
+          "images",
+          "security-identity-evolution",
+          "001-local-permission.png",
+        ),
+        "utf8",
+      ),
+    ).toBe("png");
     await expect(
       fs.stat(path.join(root, "tasks", "draft_1779524982823421-3", "turn-1779685283403237342", "scratch.txt")),
     ).rejects.toThrow();

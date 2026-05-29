@@ -30,6 +30,7 @@ const THREAD_DELIVERY_FILE_NAMES = new Set([
 ]);
 
 const THREAD_DELIVERY_DIRS = new Set([
+  "assets",
   "renders",
   "render",
   "exports",
@@ -48,6 +49,12 @@ const THREAD_DELIVERY_EXTENSIONS = new Set([
   ".md",
   ".html",
   ".json",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".gif",
+  ".svg",
 ]);
 
 export type XWorkmateArtifact = {

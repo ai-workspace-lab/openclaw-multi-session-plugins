@@ -26,6 +26,7 @@ const THREAD_DELIVERY_FILE_NAMES = new Set([
     "index.html",
 ]);
 const THREAD_DELIVERY_DIRS = new Set([
+    "assets",
     "renders",
     "render",
     "exports",
@@ -43,6 +44,12 @@ const THREAD_DELIVERY_EXTENSIONS = new Set([
     ".md",
     ".html",
     ".json",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".gif",
+    ".svg",
 ]);
 export async function prepareXWorkmateArtifacts(input) {
     const params = input.params ?? {};
