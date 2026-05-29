@@ -145,19 +145,9 @@ copying them into that task scope before returning the manifest. This covers
 agents that save output as `./file.md` while still keeping XWorkmate sync scoped
 to `tasks/<session>/<run>`.
 
-When `sinceUnixMs` is provided and the prepared task scope plus current-run
-workspace-root adoption are both empty, export falls back to explicit delivery
-files in the same OpenClaw thread workspace for the supplied `sessionKey`. This
-handles long-running agents that finish in OpenClaw's owner/thread workspace
-instead of the prepared `tasks/<session>/<run>` directory. The fallback only
-copies known deliverables such as `DELIVERY.md`, `ffprobe.json`,
-`video.config.json`, `index.html`, and files under delivery directories like
-`renders/`; it does not scan other threads or borrow artifacts from earlier
-task scopes.
-
 Without `sinceUnixMs`, export/list only reads the current task scope. The plugin
-never scans `tasks/` as a fallback and does not borrow artifacts from earlier
-task scopes.
+never scans `tasks/`, `owners/*/threads/*`, or any previous thread workspace as
+a fallback and does not borrow artifacts from earlier task scopes.
 
 Each exported artifact includes `artifactRef`, a plugin-signed reference over
 the issued session/run scope, artifact scope, path, size, and SHA-256 digest. `read` accepts
@@ -217,7 +207,7 @@ only remote file access path.
 - Only files inside the resolved OpenClaw workspace are exported.
 - `.git`, `.openclaw`, `.xworkmate`, `.pi`, build outputs, and dependency folders are excluded from task artifact exports.
 - Workspace-root files are adopted only when `sinceUnixMs` is provided; adopted files are copied into the current `tasks/<safe-session-key>/<safe-run-id>` scope before listing or reading.
-- If `sinceUnixMs` is provided and task-scope plus workspace-root adoption are empty, export may adopt explicit deliverables from the same `sessionKey` owner/thread workspace. This fallback is limited to known delivery files and delivery directories, and never scans other thread workspaces.
+- Export never adopts files from OpenClaw owner/thread workspaces; agents must write into the prepared task scope or into the current-run workspace root for timestamp-gated adoption.
 - Symlinks are skipped to avoid workspace escape.
 - Files larger than `maxInlineBytes` are listed with metadata and a warning, but are not inlined.
 - `artifactScope` must be `tasks/<safe-session-key>/<safe-run-id>`.

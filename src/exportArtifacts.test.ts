@@ -389,7 +389,7 @@ describe("exportXWorkmateArtifacts", () => {
     expect(result.warnings).toEqual([]);
   });
 
-  it("adopts same-thread delivery files when the prepared task scope is empty", async () => {
+  it("does not adopt same-thread delivery files when the prepared task scope is empty", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
     await prepareXWorkmateArtifacts({
       params: {
@@ -428,20 +428,12 @@ describe("exportXWorkmateArtifacts", () => {
     });
 
     expect(result.artifactScope).toBe("tasks/draft_1779524982823421-3/turn-1779685283403237342");
-    expect(result.artifacts.map((entry) => entry.relativePath).sort()).toEqual([
-      "DELIVERY.md",
-      "assets/images/manifest.md",
-      "assets/images/security-identity-evolution/001-local-permission.png",
-      "renders/cloud-native-servicemesh-network.mp4",
-    ]);
-    expect(result.artifacts.map((entry) => entry.contentType).sort()).toEqual([
-      "image/png",
-      "text/markdown",
-      "text/markdown",
-      "video/mp4",
-    ]);
-    expect(
-      await fs.readFile(
+    expect(result.artifacts).toEqual([]);
+    await expect(
+      fs.stat(path.join(root, "tasks", "draft_1779524982823421-3", "turn-1779685283403237342", "scratch.txt")),
+    ).rejects.toThrow();
+    await expect(
+      fs.stat(
         path.join(
           root,
           "tasks",
@@ -450,26 +442,7 @@ describe("exportXWorkmateArtifacts", () => {
           "renders",
           "cloud-native-servicemesh-network.mp4",
         ),
-        "utf8",
       ),
-    ).toBe("mp4");
-    expect(
-      await fs.readFile(
-        path.join(
-          root,
-          "tasks",
-          "draft_1779524982823421-3",
-          "turn-1779685283403237342",
-          "assets",
-          "images",
-          "security-identity-evolution",
-          "001-local-permission.png",
-        ),
-        "utf8",
-      ),
-    ).toBe("png");
-    await expect(
-      fs.stat(path.join(root, "tasks", "draft_1779524982823421-3", "turn-1779685283403237342", "scratch.txt")),
     ).rejects.toThrow();
     await expect(
       fs.stat(path.join(root, "tasks", "draft_1779524982823421-3", "turn-1779685283403237342", "renders", "other.mp4")),
