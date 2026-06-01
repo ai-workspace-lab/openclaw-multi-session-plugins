@@ -67,10 +67,11 @@ Equivalent config shape for a linked checkout:
 ## Contract
 
 Prepare request params are supplied by the OpenClaw host, bridge, or APP
-runtime. The plugin treats `sessionKey`, `runId`, and `workspaceDir` as the
-trusted mapping into OpenClaw's built-in multi-session model; it does not parse
-paths from chat text and does not invent fallback session/run identities.
-Gateway methods accept these fields from bridge/app runtime params. The optional
+runtime. On OpenClaw runtimes that expose a trusted plugin `sessionScope`, the
+plugin uses that scope first. Otherwise it falls back to bridge/app runtime
+params. The plugin treats `sessionKey`, `runId`, and `workspaceDir` as the
+mapping into OpenClaw's built-in multi-session model; it does not parse paths
+from chat text and does not invent fallback session/run identities. The optional
 agent tool does not expose these fields to the model; it only uses host-injected
 tool context.
 
@@ -139,15 +140,13 @@ Export response payload:
 
 Files at or below `maxInlineBytes` also include `encoding: "base64"` and `content`.
 When `artifactScope` is omitted, export/list defaults to the current task scope
-derived from `sessionKey/runId`. If `sinceUnixMs` is provided, export also
-adopts files created or changed in the workspace root during the current run by
-copying them into that task scope before returning the manifest. This covers
-agents that save output as `./file.md` while still keeping XWorkmate sync scoped
-to `tasks/<session>/<run>`.
+derived from `sessionKey/runId`. `sinceUnixMs` is only a filter inside that task
+scope. The plugin does not adopt files from the workspace root; agents must
+write final deliverables directly into the prepared `artifactDirectory`.
 
-Without `sinceUnixMs`, export/list only reads the current task scope. The plugin
-never scans `tasks/`, `owners/*/threads/*`, or any previous thread workspace as
-a fallback and does not borrow artifacts from earlier task scopes.
+The plugin never scans workspace root, `owners/*/threads/*`, or any previous
+thread workspace as a fallback and does not borrow artifacts from earlier task
+scopes.
 
 Each exported artifact includes `artifactRef`, a plugin-signed reference over
 the issued session/run scope, artifact scope, path, size, and SHA-256 digest. `read` accepts
@@ -205,9 +204,9 @@ only remote file access path.
 ## Limits
 
 - Only files inside the resolved OpenClaw workspace are exported.
-- `.git`, `.openclaw`, `.xworkmate`, `.pi`, build outputs, and dependency folders are excluded from task artifact exports.
-- Workspace-root files are adopted only when `sinceUnixMs` is provided; adopted files are copied into the current `tasks/<safe-session-key>/<safe-run-id>` scope before listing or reading.
-- Export never adopts files from OpenClaw owner/thread workspaces; agents must write into the prepared task scope or into the current-run workspace root for timestamp-gated adoption.
+- `.git`, `.openclaw`, `.xworkmate`, `.pi`, transient framework state, and dependency folders are excluded from task artifact exports.
+- `dist/`, `build/`, and other delivery directories inside the prepared task scope are exported recursively.
+- Export never adopts files from the workspace root or OpenClaw owner/thread workspaces; agents must write into the prepared task scope.
 - Symlinks are skipped to avoid workspace escape.
 - Files larger than `maxInlineBytes` are listed with metadata and a warning, but are not inlined.
 - `artifactScope` must be `tasks/<safe-session-key>/<safe-run-id>`.

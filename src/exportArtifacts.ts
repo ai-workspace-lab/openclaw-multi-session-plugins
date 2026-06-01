@@ -16,8 +16,6 @@ const SKIPPED_DIRS = new Set([
   ".dart_tool",
   ".next",
   ".turbo",
-  "build",
-  "dist",
   "node_modules",
 ]);
 
@@ -166,23 +164,11 @@ export async function exportXWorkmateArtifacts(input: ExportInput): Promise<XWor
         scanRoot: scopeRoot,
         relativeRoot: scopeRoot,
         sinceUnixMs,
-        skipTaskScopeRoot: false,
         warnSkippedSymlinks: true,
         warnings,
       })
     : [];
-  const adoptedCandidates =
-    sinceUnixMs > 0
-      ? await adoptWorkspaceRootCandidatesIntoScope({
-          workspaceRoot,
-          scopeRoot,
-          artifactScope,
-          sinceUnixMs,
-          existingRelativePaths: new Set(scopedCandidates.map((candidate) => candidate.relativePath)),
-          warnings,
-        })
-      : [];
-  const candidates = [...scopedCandidates, ...adoptedCandidates];
+  const candidates = scopedCandidates;
   if (!scopePrepared && candidates.length === 0) {
     warnings.push("artifact scope is not prepared for this task run");
   }
@@ -403,58 +389,10 @@ export function formatArtifactManifestMarkdown(input: {
   return lines.join("\n");
 }
 
-async function adoptWorkspaceRootCandidatesIntoScope(input: {
-  workspaceRoot: string;
-  scopeRoot: string;
-  artifactScope: string;
-  sinceUnixMs: number;
-  existingRelativePaths: Set<string>;
-  warnings: string[];
-}): Promise<Candidate[]> {
-  const rootCandidates = await collectCandidates({
-    scanRoot: input.workspaceRoot,
-    relativeRoot: input.workspaceRoot,
-    sinceUnixMs: input.sinceUnixMs,
-    skipTaskScopeRoot: true,
-    warnSkippedSymlinks: false,
-    warnings: input.warnings,
-  });
-  const adopted: Candidate[] = [];
-  for (const candidate of rootCandidates) {
-    if (input.existingRelativePaths.has(candidate.relativePath)) {
-      continue;
-    }
-    const targetPath = path.join(input.scopeRoot, candidate.relativePath.split("/").join(path.sep));
-    if (!isWithinRoot(input.scopeRoot, targetPath)) {
-      input.warnings.push(`skipped path outside task scope ${candidate.relativePath}`);
-      continue;
-    }
-    if (await fileExists(targetPath)) {
-      input.existingRelativePaths.add(candidate.relativePath);
-      continue;
-    }
-    await fs.mkdir(path.dirname(targetPath), { recursive: true });
-    await fs.copyFile(candidate.absolutePath, targetPath);
-    const stat = await fs.stat(targetPath);
-    const realPath = await fs.realpath(targetPath);
-    adopted.push({
-      absolutePath: realPath,
-      relativePath: candidate.relativePath,
-      sizeBytes: stat.size,
-      mtimeMs: candidate.mtimeMs,
-      artifactScope: input.artifactScope,
-      scopeKind: "task",
-    });
-    input.existingRelativePaths.add(candidate.relativePath);
-  }
-  return adopted;
-}
-
 async function collectCandidates(input: {
   scanRoot: string;
   relativeRoot: string;
   sinceUnixMs: number;
-  skipTaskScopeRoot: boolean;
   warnSkippedSymlinks: boolean;
   warnings: string[];
 }): Promise<Candidate[]> {
@@ -483,9 +421,6 @@ async function collectCandidates(input: {
         continue;
       }
       if (entry.isDirectory()) {
-        if (input.skipTaskScopeRoot && currentDir === input.relativeRoot && entry.name === TASK_SCOPE_ROOT) {
-          continue;
-        }
         if (SKIPPED_DIRS.has(entry.name)) {
           continue;
         }
@@ -552,6 +487,7 @@ function safeScopeSegment(value: string): string {
     .trim()
     .replace(/[\\/]+/g, "_")
     .replace(/[^A-Za-z0-9._-]+/g, "_")
+    .replace(/_+/g, "_")
     .replace(/^[._-]+|[._-]+$/g, "")
     .slice(0, 96) || "scope";
 }
@@ -599,15 +535,6 @@ async function directoryExists(absolutePath: string): Promise<boolean> {
   try {
     const stat = await fs.stat(absolutePath);
     return stat.isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-async function fileExists(absolutePath: string): Promise<boolean> {
-  try {
-    const stat = await fs.stat(absolutePath);
-    return stat.isFile();
   } catch {
     return false;
   }

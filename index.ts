@@ -3,6 +3,7 @@ import type {
   GatewayRequestHandlerOptions,
   OpenClawPluginApi,
 } from "openclaw/plugin-sdk/core";
+import { getPluginRuntimeGatewayRequestScope } from "openclaw/plugin-sdk/plugin-runtime";
 import {
   exportXWorkmateArtifacts,
   prepareXWorkmateArtifacts,
@@ -15,12 +16,62 @@ type XWorkmateToolContext = {
   workspaceDir?: string;
   sessionKey?: string;
   runId?: string;
-  sessionScope?: {
-    sessionKey?: string;
-    runId?: string;
-    workspaceDir?: string;
-  };
+  sessionScope?: XWorkmatePluginSessionScope;
 };
+
+type XWorkmatePluginSessionScope = {
+  scopeKind?: "global" | "session" | "run";
+  sessionKey?: string;
+  runId?: string;
+  workspaceDir?: string;
+  relativeTaskDirectory?: string;
+};
+
+type XWorkmateResolvedRunScope = {
+  sessionKey: string;
+  runId: string;
+  workspaceDir?: string;
+  artifactScope?: string;
+};
+
+type XWorkmateGatewayRequestScope = {
+  sessionScope?: XWorkmatePluginSessionScope;
+};
+
+function scopedGatewayParams(params: Record<string, unknown>): Record<string, unknown> {
+  const sessionScope = (getPluginRuntimeGatewayRequestScope() as XWorkmateGatewayRequestScope | undefined)?.sessionScope;
+  const runScope = resolveRunScope({ sessionScope });
+  if (!runScope) {
+    return params;
+  }
+  return {
+    ...params,
+    sessionKey: runScope.sessionKey,
+    runId: runScope.runId,
+    ...(runScope.workspaceDir ? { workspaceDir: runScope.workspaceDir } : {}),
+    ...(runScope.artifactScope ? { artifactScope: runScope.artifactScope } : {}),
+  };
+}
+
+function resolveRunScope(ctx: {
+  sessionScope?: XWorkmatePluginSessionScope;
+  sessionKey?: string;
+  runId?: string;
+  workspaceDir?: string;
+}): XWorkmateResolvedRunScope | undefined {
+  const scope = ctx.sessionScope;
+  const sessionKey = scope?.sessionKey || ctx.sessionKey;
+  const runId = scope?.runId || ctx.runId || "";
+  if (!sessionKey || !runId) {
+    return undefined;
+  }
+  return {
+    sessionKey,
+    runId,
+    ...(scope?.workspaceDir || ctx.workspaceDir ? { workspaceDir: scope?.workspaceDir || ctx.workspaceDir } : {}),
+    ...(scope?.relativeTaskDirectory ? { artifactScope: scope.relativeTaskDirectory } : {}),
+  };
+}
 
 const plugin = {
   id: "openclaw-multi-session-plugins",
@@ -35,7 +86,7 @@ function register(api: OpenClawPluginApi) {
   api.registerGatewayMethod("xworkmate.artifacts.prepare", async (opts: GatewayRequestHandlerOptions) => {
     try {
       const payload = await prepareXWorkmateArtifacts({
-        params: opts.params,
+        params: scopedGatewayParams(opts.params),
         config: api.config,
         pluginConfig: api.pluginConfig,
       });
@@ -50,7 +101,7 @@ function register(api: OpenClawPluginApi) {
   api.registerGatewayMethod("xworkmate.artifacts.export", async (opts: GatewayRequestHandlerOptions) => {
     try {
       const payload = await exportXWorkmateArtifacts({
-        params: opts.params,
+        params: scopedGatewayParams(opts.params),
         config: api.config,
         pluginConfig: api.pluginConfig,
       });
@@ -65,7 +116,7 @@ function register(api: OpenClawPluginApi) {
   api.registerGatewayMethod("xworkmate.artifacts.list", async (opts: GatewayRequestHandlerOptions) => {
     try {
       const payload = await exportXWorkmateArtifacts({
-        params: { ...opts.params, includeContent: false },
+        params: { ...scopedGatewayParams(opts.params), includeContent: false },
         config: api.config,
         pluginConfig: api.pluginConfig,
       });
@@ -80,7 +131,7 @@ function register(api: OpenClawPluginApi) {
   api.registerGatewayMethod("xworkmate.artifacts.read", async (opts: GatewayRequestHandlerOptions) => {
     try {
       const payload = await readXWorkmateArtifact({
-        params: opts.params,
+        params: scopedGatewayParams(opts.params),
         config: api.config,
         pluginConfig: api.pluginConfig,
       });
@@ -95,7 +146,7 @@ function register(api: OpenClawPluginApi) {
   api.registerGatewayMethod("xworkmate.agents.run", async (opts: GatewayRequestHandlerOptions) => {
     try {
       const payload = await runXWorkmateBridgeAgents({
-        params: opts.params,
+        params: scopedGatewayParams(opts.params),
         config: api.config,
         pluginConfig: api.pluginConfig,
       });
@@ -164,15 +215,16 @@ function createXWorkmateArtifactsTool(
     },
     async execute(_id: string, params: Record<string, unknown>) {
       const action = typeof params.action === "string" ? params.action : "";
+      const runScope = resolveRunScope(ctx);
       const sessionKey = ctx.sessionScope?.sessionKey || ctx.sessionKey;
       const runId = ctx.sessionScope?.runId || ctx.runId || "";
-      const workspaceDir = ctx.sessionScope?.workspaceDir || ctx.workspaceDir;
       if (!sessionKey) {
         throw new Error("sessionKey required");
       }
       if (!runId) {
         throw new Error("runId required");
       }
+      const workspaceDir = ctx.sessionScope?.workspaceDir || ctx.workspaceDir;
       const {
         sessionKey: _ignoredSessionKey,
         runId: _ignoredRunId,
@@ -184,6 +236,7 @@ function createXWorkmateArtifactsTool(
         sessionKey,
         runId,
         ...(workspaceDir ? { workspaceDir } : {}),
+        ...(runScope?.artifactScope ? { artifactScope: runScope.artifactScope } : {}),
       };
       if (action === "list") {
         const payload = await exportXWorkmateArtifacts({
@@ -275,15 +328,16 @@ function createXWorkmateAgentsTool(
       required: ["taskPrompt"],
     },
     async execute(_id: string, params: Record<string, unknown>) {
+      const runScope = resolveRunScope(ctx);
       const sessionKey = ctx.sessionScope?.sessionKey || ctx.sessionKey;
       const runId = ctx.sessionScope?.runId || ctx.runId || "";
-      const workspaceDir = ctx.sessionScope?.workspaceDir || ctx.workspaceDir;
       if (!sessionKey) {
         throw new Error("sessionKey required");
       }
       if (!runId) {
         throw new Error("runId required");
       }
+      const workspaceDir = ctx.sessionScope?.workspaceDir || ctx.workspaceDir;
       const {
         sessionKey: _ignoredSessionKey,
         runId: _ignoredRunId,
@@ -296,6 +350,7 @@ function createXWorkmateAgentsTool(
           sessionKey,
           runId,
           ...(workspaceDir ? { workspaceDir } : {}),
+          ...(runScope?.artifactScope ? { artifactScope: runScope.artifactScope } : {}),
         },
         config: ctx.config ?? api.config,
         pluginConfig: api.pluginConfig,

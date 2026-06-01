@@ -339,7 +339,15 @@ describe("plugin registration", () => {
     const factory = tools[0]?.tool as (ctx: Record<string, unknown>) => {
       execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }>;
     };
-    const tool = factory({ sessionKey: "thread-main", runId: "turn-1", workspaceDir: root });
+    const tool = factory({
+      sessionScope: {
+        scopeKind: "run",
+        sessionKey: "thread-main",
+        runId: "turn-1",
+        workspaceDir: root,
+        relativeTaskDirectory: "tasks/thread-main/turn-1",
+      },
+    });
     const result = await tool.execute("call-1", {
       action: "list",
       sessionKey: "thread-other",
