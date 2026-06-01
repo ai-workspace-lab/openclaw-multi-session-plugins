@@ -5,6 +5,7 @@ import path from "node:path";
 const DEFAULT_MAX_FILES = 64;
 const DEFAULT_MAX_INLINE_BYTES = 10 * 1024 * 1024;
 const TASK_SCOPE_ROOT = "tasks";
+const ARTIFACT_IGNORE_FILE = "artifact-ignore.md";
 const GENERATED_ARTIFACT_REF_SECRET = randomBytes(32).toString("hex");
 const SKIPPED_DIRS = new Set([
     ".git",
@@ -85,6 +86,7 @@ export async function exportXWorkmateArtifacts(input) {
             sinceUnixMs,
             warnSkippedSymlinks: true,
             warnings,
+            ignoreRules: await loadArtifactIgnoreRules(scopeRoot, warnings),
         })
         : [];
     const candidates = scopedCandidates;
@@ -333,6 +335,9 @@ async function collectCandidates(input) {
             if (!relativePath) {
                 continue;
             }
+            if (isIgnoredArtifactPath(relativePath, input.ignoreRules)) {
+                continue;
+            }
             candidates.push({
                 absolutePath: realPath,
                 relativePath,
@@ -341,6 +346,109 @@ async function collectCandidates(input) {
             });
         }
     }
+}
+async function loadArtifactIgnoreRules(scopeRoot, warnings) {
+    const rules = [{ kind: "exact", path: ARTIFACT_IGNORE_FILE }];
+    const ignorePath = path.join(scopeRoot, ARTIFACT_IGNORE_FILE);
+    let content = "";
+    try {
+        content = await fs.readFile(ignorePath, "utf8");
+    }
+    catch (error) {
+        if (error?.code !== "ENOENT") {
+            warnings.push(`cannot read ${ARTIFACT_IGNORE_FILE}: ${String(error)}`);
+        }
+        return rules;
+    }
+    for (const line of artifactIgnoreRuleLines(content)) {
+        const rule = parseArtifactIgnoreRule(line, warnings);
+        if (rule) {
+            rules.push(rule);
+        }
+    }
+    return rules;
+}
+function artifactIgnoreRuleLines(content) {
+    const lines = content.split(/\r?\n/);
+    const fencedLines = [];
+    let insideBlock = false;
+    let sawBlock = false;
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!insideBlock && trimmed === "```artifact-ignore") {
+            insideBlock = true;
+            sawBlock = true;
+            continue;
+        }
+        if (insideBlock && trimmed === "```") {
+            insideBlock = false;
+            continue;
+        }
+        if (insideBlock) {
+            fencedLines.push(line);
+        }
+    }
+    return sawBlock ? fencedLines : lines;
+}
+function parseArtifactIgnoreRule(line, warnings) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+        return undefined;
+    }
+    if (trimmed.includes("\0") || path.isAbsolute(trimmed) || trimmed.split(/[\\/]/).some((part) => part === ".." || part === ".")) {
+        warnings.push(`ignored unsafe artifact ignore rule: ${trimmed}`);
+        return undefined;
+    }
+    const directoryRule = /[\\/]$/.test(trimmed);
+    const normalized = trimmed.split(/[\\/]/).filter(Boolean).join("/");
+    if (!normalized) {
+        return undefined;
+    }
+    if (directoryRule) {
+        if (normalized.includes("*")) {
+            warnings.push(`ignored unsupported artifact ignore rule: ${trimmed}`);
+            return undefined;
+        }
+        return { kind: "directory", path: normalized };
+    }
+    if (normalized.startsWith("**/*") && normalized.length > 4) {
+        return { kind: "any-suffix", suffix: normalized.slice(4) };
+    }
+    if (!normalized.includes("/") && normalized.startsWith("*") && normalized.length > 1) {
+        return { kind: "root-suffix", suffix: normalized.slice(1) };
+    }
+    if (normalized.includes("*")) {
+        warnings.push(`ignored unsupported artifact ignore rule: ${trimmed}`);
+        return undefined;
+    }
+    return { kind: "exact", path: normalized };
+}
+function isIgnoredArtifactPath(relativePath, rules) {
+    for (const rule of rules) {
+        switch (rule.kind) {
+            case "directory":
+                if (relativePath === rule.path || relativePath.startsWith(`${rule.path}/`)) {
+                    return true;
+                }
+                break;
+            case "exact":
+                if (relativePath === rule.path) {
+                    return true;
+                }
+                break;
+            case "root-suffix":
+                if (!relativePath.includes("/") && relativePath.endsWith(rule.suffix)) {
+                    return true;
+                }
+                break;
+            case "any-suffix":
+                if (relativePath.endsWith(rule.suffix)) {
+                    return true;
+                }
+                break;
+        }
+    }
+    return false;
 }
 function artifactScopeFor(sessionKey, runId) {
     return [taskSessionScopeFor(sessionKey), safeScopeSegment(runId)].join("/");

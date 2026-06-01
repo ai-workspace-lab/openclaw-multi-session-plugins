@@ -127,6 +127,45 @@ describe("exportXWorkmateArtifacts", () => {
     expect(result.warnings.some((entry) => entry.includes("linked.txt"))).toBe(true);
   });
 
+  it("applies artifact-ignore.md inside the current task scope", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "run-1" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.mkdir(path.join(prepared.artifactDirectory, "tmp"), { recursive: true });
+    await fs.mkdir(path.join(prepared.artifactDirectory, "reports", "debug"), { recursive: true });
+    await fs.writeFile(
+      path.join(prepared.artifactDirectory, "artifact-ignore.md"),
+      [
+        "# Artifact Ignore",
+        "",
+        "```artifact-ignore",
+        "tmp/",
+        "*.log",
+        "**/*.tmp",
+        "reports/debug/trace.json",
+        "```",
+        "",
+      ].join("\n"),
+    );
+    await fs.writeFile(path.join(prepared.artifactDirectory, "tmp", "scratch.md"), "scratch");
+    await fs.writeFile(path.join(prepared.artifactDirectory, "root.log"), "log");
+    await fs.writeFile(path.join(prepared.artifactDirectory, "reports", "draft.tmp"), "tmp");
+    await fs.writeFile(path.join(prepared.artifactDirectory, "reports", "debug", "trace.json"), "{}");
+    await fs.writeFile(path.join(prepared.artifactDirectory, "reports", "final.md"), "final");
+
+    const result = await exportXWorkmateArtifacts({
+      params: {
+        sessionKey: "thread-main",
+        runId: "run-1",
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+
+    expect(result.artifacts.map((entry) => entry.relativePath)).toEqual(["reports/final.md"]);
+  });
+
   it("exports only files inside a task artifact scope", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
     const first = await prepareXWorkmateArtifacts({
