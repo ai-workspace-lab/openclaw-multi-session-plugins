@@ -128,12 +128,22 @@ jobs:
           echo "==> Installing ${PACKAGE} from ${INSTALL_SOURCE} on $(hostname) (force=${FORCE})"
           echo "==> Install spec: ${INSTALL_SPEC}"
 
+          get_installed_version() {
+            node -e '
+              const { execSync } = require("node:child_process");
+              const { join } = require("node:path");
+              const { existsSync, readFileSync } = require("node:fs");
+              const name = process.argv[1];
+              const root = execSync("npm root -g", { encoding: "utf8" }).trim();
+              const manifest = join(root, name, "package.json");
+              if (existsSync(manifest)) {
+                process.stdout.write(JSON.parse(readFileSync(manifest, "utf8")).version || "");
+              }
+            ' "${PLUGIN_NAME}" 2>/dev/null || true
+          }
+
           # Record the previously installed version for rollback.
-          PREVIOUS_VERSION=""
-          if command -v openclaw >/dev/null 2>&1; then
-            PREVIOUS_VERSION="$(npm ls -g "${PLUGIN_NAME}" --depth=0 2>/dev/null \
-              | awk -F'[@:]' '/'"${PLUGIN_NAME}"'@/ {print $2; exit}' || true)"
-          fi
+          PREVIOUS_VERSION="$(get_installed_version)"
           echo "==> Previously installed version: ${PREVIOUS_VERSION:-<none>}"
 
           # Skip when the requested version is already present unless forced.
@@ -181,8 +191,7 @@ jobs:
           fi
 
           # Verify the installed version matches the requested version.
-          INSTALLED="$(npm ls -g "${PLUGIN_NAME}" --depth=0 2>/dev/null \
-            | awk -F'[@:]' '/'"${PLUGIN_NAME}"'@/ {print $2; exit}' || true)"
+          INSTALLED="$(get_installed_version)"
           if [ "${INSTALLED}" != "${VERSION}" ]; then
             echo "::remote-error::Verification failed: expected ${VERSION}, found ${INSTALLED:-<none>}"
             exit 1
