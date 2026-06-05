@@ -1,6 +1,6 @@
 import { getPluginRuntimeGatewayRequestScope } from "openclaw/plugin-sdk/plugin-runtime";
 import { collectAndSnapshotXWorkmateArtifacts, exportXWorkmateArtifacts, prepareXWorkmateArtifacts, readXWorkmateArtifact, formatArtifactManifestMarkdown, } from "./src/exportArtifacts.js";
-import { createOrUpdateXWorkmateTaskRecord, createXWorkmateTaskStore, getXWorkmateTaskSnapshot, recordXWorkmateSessionMapping, registerXWorkmateDetachedTaskRuntime, registerXWorkmateSessionExtension, } from "./src/taskState.js";
+import { getXWorkmateTaskSnapshot, recordXWorkmateSessionMapping, registerXWorkmateSessionExtension, } from "./src/taskState.js";
 function scopedGatewayParams(params) {
     const sessionScope = getPluginRuntimeGatewayRequestScope()?.sessionScope;
     const runScope = resolveRunScope({ sessionScope });
@@ -9,7 +9,7 @@ function scopedGatewayParams(params) {
     }
     return {
         ...params,
-        sessionKey: runScope.sessionKey,
+        openclawSessionKey: runScope.sessionKey,
         runId: runScope.runId,
         ...(runScope.workspaceDir ? { workspaceDir: runScope.workspaceDir } : {}),
         ...(runScope.artifactScope ? { artifactScope: runScope.artifactScope } : {}),
@@ -29,6 +29,9 @@ function resolveRunScope(ctx) {
         ...(scope?.relativeTaskDirectory ? { artifactScope: scope.relativeTaskDirectory } : {}),
     };
 }
+function stringParam(value) {
+    return typeof value === "string" ? value.trim() : "";
+}
 const plugin = {
     id: "openclaw-multi-session-plugins",
     name: "openclaw-multi-session-plugins",
@@ -37,57 +40,67 @@ const plugin = {
 };
 export default plugin;
 function register(api) {
-    const taskStore = createXWorkmateTaskStore();
     registerXWorkmateSessionExtension(api);
-    registerXWorkmateDetachedTaskRuntime(api, taskStore);
-    api.registerHook("session.start", async (event) => {
+    api.registerHook("session_start", async (event) => {
         try {
             const params = scopedGatewayParams(event?.context ?? event);
-            if (params.sessionKey && params.runId) {
-                createOrUpdateXWorkmateTaskRecord(taskStore, {
-                    params,
-                    status: "running",
-                    progressSummary: "OpenClaw task is running",
-                });
+            const openclawSessionKey = stringParam(params.openclawSessionKey);
+            if (openclawSessionKey && params.runId) {
+                const hookParams = { ...params, openclawSessionKey };
                 const prepared = await prepareXWorkmateArtifacts({
-                    params,
+                    params: hookParams,
                     config: api.config,
                     pluginConfig: api.pluginConfig,
                 });
                 await recordXWorkmateSessionMapping({
                     api,
-                    taskStore,
-                    params,
+                    params: hookParams,
                     artifactScope: prepared.artifactScope,
+                    source: "session_start",
                 });
             }
         }
         catch (error) {
-            api.logger?.warn?.(`xworkmate session.start preparation failed: ${String(error)}`);
+            api.logger?.warn?.(`xworkmate session_start preparation failed: ${String(error)}`);
         }
     }, { name: "openclaw-multi-session-plugins.session-start" });
-    api.registerGatewayMethod("xworkmate.tasks.get", async (opts) => {
+    api.registerGatewayMethod("xworkmate.session.prepare", async (opts) => {
         try {
-            const payload = await getXWorkmateTaskSnapshot({
+            const params = scopedGatewayParams(opts.params);
+            const mapping = await recordXWorkmateSessionMapping({
                 api,
-                taskStore,
-                params: scopedGatewayParams(opts.params),
+                params,
+                source: "bridge_prepare",
             });
-            opts.respond(true, payload, undefined);
+            const payload = await prepareXWorkmateArtifacts({
+                params: {
+                    ...params,
+                    openclawSessionKey: mapping.openclawSessionKey,
+                    expectedArtifactDirs: mapping.expectedArtifactDirs,
+                },
+                config: api.config,
+                pluginConfig: api.pluginConfig,
+            });
+            opts.respond(true, {
+                ...payload,
+                mapping,
+                appThreadKey: mapping.appThreadKey,
+                openclawSessionKey: mapping.openclawSessionKey,
+                expectedArtifactDirs: mapping.expectedArtifactDirs,
+            }, undefined);
         }
         catch (error) {
             opts.respond(false, undefined, {
-                code: "INVALID_REQUEST",
+                code: String(error).includes("conflict") ? "CONFLICT" : "INVALID_REQUEST",
                 message: error instanceof Error ? error.message : String(error),
             });
         }
     });
-    api.registerGatewayMethod("xworkmate.artifacts.prepare", async (opts) => {
+    api.registerGatewayMethod("xworkmate.tasks.get", async (opts) => {
         try {
-            const payload = await prepareXWorkmateArtifacts({
+            const payload = await getXWorkmateTaskSnapshot({
+                api,
                 params: scopedGatewayParams(opts.params),
-                config: api.config,
-                pluginConfig: api.pluginConfig,
             });
             opts.respond(true, payload, undefined);
         }
@@ -220,10 +233,10 @@ function createXWorkmateArtifactsTool(api, ctx) {
                 throw new Error("runId required");
             }
             const workspaceDir = ctx.sessionScope?.workspaceDir || ctx.workspaceDir;
-            const { sessionKey: _ignoredSessionKey, runId: _ignoredRunId, workspaceDir: _ignoredWorkspaceDir, ...operationParams } = params;
+            const { sessionKey: _ignoredSessionKey, openclawSessionKey: _ignoredOpenclawSessionKey, runId: _ignoredRunId, workspaceDir: _ignoredWorkspaceDir, ...operationParams } = params;
             const baseParams = {
                 ...operationParams,
-                sessionKey,
+                openclawSessionKey: sessionKey,
                 runId,
                 ...(workspaceDir ? { workspaceDir } : {}),
                 ...(runScope?.artifactScope ? { artifactScope: runScope.artifactScope } : {}),

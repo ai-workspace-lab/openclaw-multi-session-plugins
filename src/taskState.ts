@@ -26,7 +26,6 @@ export type XWorkmateSessionMappingV1 = {
   createdAt: string;
   updatedAt: string;
   source: XWorkmateSessionMappingSource;
-  legacyDerived?: boolean;
 };
 
 export type XWorkmateTaskLookupErrorCode =
@@ -43,8 +42,6 @@ export type XWorkmateTaskLookupError = {
   mapping?: XWorkmateSessionMappingV1;
   expectedArtifactDirs?: string[];
 };
-
-export type XWorkmateTaskStore = Record<string, never>;
 
 type SessionEntry = Record<string, unknown> & {
   pluginExtensions?: Record<string, Record<string, unknown>>;
@@ -65,10 +62,6 @@ type BoundTaskRunsRuntime = {
   resolve?: (token: string) => unknown;
 };
 
-export function createXWorkmateTaskStore(): XWorkmateTaskStore {
-  return {};
-}
-
 export function registerXWorkmateSessionExtension(api: OpenClawPluginApi) {
   const registerExtension =
     api.session?.state?.registerSessionExtension ?? (api as any).registerSessionExtension;
@@ -86,13 +79,8 @@ export function registerXWorkmateSessionExtension(api: OpenClawPluginApi) {
   });
 }
 
-export function registerXWorkmateDetachedTaskRuntime(_api: OpenClawPluginApi, _taskStore: XWorkmateTaskStore) {
-  // OpenClaw native task-registry is the only task status source for this plugin.
-}
-
 export async function recordXWorkmateSessionMapping(input: {
   api: OpenClawPluginApi;
-  taskStore?: XWorkmateTaskStore;
   params: Record<string, unknown>;
   artifactScope?: string;
   source?: XWorkmateSessionMappingSource;
@@ -160,7 +148,6 @@ export async function upsertXWorkmateSessionMapping(
     metadata: XWorkmateTaskMetadataV1;
     openclawSessionKey: string;
     source: XWorkmateSessionMappingSource;
-    legacyDerived?: boolean;
   },
 ): Promise<XWorkmateSessionMappingV1> {
   const patchSessionEntry = resolvePatchSessionEntry(api);
@@ -192,7 +179,6 @@ export async function upsertXWorkmateSessionMapping(
           createdAt: input.metadata.createdAt || now,
           updatedAt: now,
           source: input.source,
-          legacyDerived: input.legacyDerived === true ? true : undefined,
         }) as XWorkmateSessionMappingV1;
       }
       return {
@@ -238,7 +224,6 @@ export async function readXWorkmateSessionMapping(
 
 export async function getXWorkmateTaskSnapshot(input: {
   api: OpenClawPluginApi;
-  taskStore?: XWorkmateTaskStore;
   params: Record<string, unknown>;
 }): Promise<Record<string, unknown>> {
   const params = input.params ?? {};
@@ -360,7 +345,6 @@ function readMappingFromEntry(entry: SessionEntry | undefined | null): XWorkmate
     createdAt: optionalString(raw.createdAt) || new Date(0).toISOString(),
     updatedAt: optionalString(raw.updatedAt) || optionalString(raw.createdAt) || new Date(0).toISOString(),
     source: parseMappingSource(raw.source),
-    ...(raw.legacyDerived === true ? { legacyDerived: true } : {}),
   };
 }
 
