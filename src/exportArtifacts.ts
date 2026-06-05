@@ -355,7 +355,7 @@ export async function readXWorkmateArtifact(input: ReadInput): Promise<XWorkmate
   };
 }
 
-export function formatArtifactManifestMarkdown(input: {
+function formatArtifactManifestMarkdown(input: {
   remoteWorkingDirectory: string;
   artifactScope?: string;
   scopeKind?: XWorkmateArtifactScopeKind;
@@ -917,7 +917,6 @@ function artifactRefSigningSecret(pluginConfig: Record<string, unknown>): string
   return (
     optionalString(pluginConfig.artifactRefSigningSecret) ||
     optionalString(process.env.XWORKMATE_ARTIFACT_REF_SIGNING_SECRET) ||
-    optionalString(process.env.XWORKMATE_ARTIFACT_DOWNLOAD_SIGNING_SECRET) ||
     GENERATED_ARTIFACT_REF_SECRET
   );
 }

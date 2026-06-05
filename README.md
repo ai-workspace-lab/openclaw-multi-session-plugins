@@ -223,3 +223,13 @@ pnpm test
 pnpm typecheck
 pnpm pack:check
 ```
+
+### Coding standards
+
+- **No unused exports.** Functions and types that are only used within the same file must not be exported. An `export` keyword signals a public API surface that downstream consumers may depend on.
+- **No legacy fallback chains.** When renaming config keys or environment variables, remove the old name from the codebase. Multiple fallback paths to the same dependent service (e.g., two env vars for the same secret) create confusion and mask configuration errors.
+- **No hardcoded model identifiers** (e.g., kimi-k2.5, minimax-m2.7, glm-5). Model selection must come from configuration or the bridge.
+- **No silent error swallowing.** Every `catch` block must log, warn, rethrow, or return a meaningful fallback. Empty `catch` and `.catch(() => {})` are forbidden.
+- **No redundant indirection.** If function A only calls B which only calls C with no added logic, inline or remove the middle function.
+- **No stale config references.** Scripts in `package.json`, CI workflows, and documentation must reference only tooling that still exists in the project.
+- **Multi-agent references** in bridge protocol parameters (`multiAgent: true`, `mode: "multi-agent"`) are legitimate protocol constants and are not dead code. However, framework-level ARIS or internal multi-agent orchestration code that duplicates bridge functionality must be removed.
