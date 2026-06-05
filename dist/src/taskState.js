@@ -1,12 +1,8 @@
 import { exportXWorkmateArtifacts } from "./exportArtifacts.js";
-const XWORKMATE_SESSION_EXTENSION_NAMESPACE = "xworkmate";
-const XWORKMATE_PLUGIN_ID = "openclaw-multi-session-plugins";
+export const XWORKMATE_PLUGIN_ID = "openclaw-multi-session-plugins";
+export const XWORKMATE_SESSION_EXTENSION_NAMESPACE = "xworkmate.sessionMapping";
 export function createXWorkmateTaskStore() {
-    return {
-        records: new Map(),
-        sessionMappingsByAppKey: new Map(),
-        sessionMappingsByOpenClawKey: new Map(),
-    };
+    return {};
 }
 export function registerXWorkmateSessionExtension(api) {
     const registerExtension = api.session?.state?.registerSessionExtension ?? api.registerSessionExtension;
@@ -15,251 +11,272 @@ export function registerXWorkmateSessionExtension(api) {
     }
     registerExtension({
         namespace: XWORKMATE_SESSION_EXTENSION_NAMESPACE,
-        description: "XWorkmate OpenClaw/App session key mapping for artifact and task recovery.",
+        description: "Durable XWorkmate app/OpenClaw session key mapping.",
         sessionEntrySlotKey: "xworkmate",
         project: (ctx) => {
-            const state = asRecord(ctx.state) ?? {};
-            const appSessionKey = optionalString(state.appSessionKey) ||
-                optionalString(state.appThreadId) ||
-                optionalString(state.threadId) ||
-                appSessionKeyFromOpenClawSessionKey(ctx.sessionKey);
-            const openClawSessionKey = optionalString(state.openClawSessionKey) || ctx.sessionKey;
+            const state = asRecord(ctx.state);
+            return state ?? {};
+        },
+    });
+}
+export function registerXWorkmateDetachedTaskRuntime(_api, _taskStore) {
+    // OpenClaw native task-registry is the only task status source for this plugin.
+}
+export async function recordXWorkmateSessionMapping(input) {
+    const metadata = normalizeXWorkmateTaskMetadataV1(input.params);
+    const openclawSessionKey = requiredString(input.params.openclawSessionKey ?? metadata.openclawSessionKey, "openclawSessionKey required");
+    return upsertXWorkmateSessionMapping(input.api, {
+        metadata: {
+            ...metadata,
+            openclawSessionKey,
+        },
+        openclawSessionKey,
+        source: input.source ?? "bridge_prepare",
+    });
+}
+export function normalizeXWorkmateTaskMetadataV1(input) {
+    const envelope = asRecord(input.xworkmate) ?? asRecord(input.xworkmateMetadata) ?? input;
+    const schemaVersion = Number(envelope.schemaVersion ?? 1);
+    if (schemaVersion !== 1) {
+        throw new Error("schemaVersion must be 1");
+    }
+    const appThreadKey = requiredString(envelope.appThreadKey, "appThreadKey required");
+    const createdAt = optionalString(envelope.createdAt) || new Date().toISOString();
+    return compactObject({
+        schemaVersion: 1,
+        appThreadKey,
+        openclawSessionKey: optionalString(envelope.openclawSessionKey),
+        expectedArtifactDirs: normalizeExpectedArtifactDirs(envelope.expectedArtifactDirs),
+        requestId: optionalString(envelope.requestId),
+        externalTaskId: optionalString(envelope.externalTaskId ?? envelope.taskId),
+        createdAt,
+    });
+}
+export function normalizeExpectedArtifactDirs(value) {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    const seen = new Set();
+    const result = [];
+    for (const entry of value) {
+        const text = optionalString(entry).replaceAll("\\", "/").replace(/^\.\/+/u, "");
+        if (!text || seen.has(text)) {
+            continue;
+        }
+        if (text.startsWith("/") || /^[A-Za-z]:\//u.test(text) || text.split("/").includes("..")) {
+            throw new Error("expectedArtifactDirs must be relative paths without traversal");
+        }
+        const normalized = text.endsWith("/") ? text : `${text}/`;
+        if (!seen.has(normalized)) {
+            seen.add(normalized);
+            result.push(normalized);
+        }
+    }
+    return result;
+}
+export async function upsertXWorkmateSessionMapping(api, input) {
+    const patchSessionEntry = resolvePatchSessionEntry(api);
+    if (!patchSessionEntry) {
+        throw new Error("OpenClaw runtime session patch API is unavailable");
+    }
+    const now = new Date().toISOString();
+    let mapping;
+    await patchSessionEntry({
+        sessionKey: input.openclawSessionKey,
+        preserveActivity: true,
+        update: (entry) => {
+            const existing = readMappingFromEntry(entry);
+            if (existing) {
+                assertMappingCompatible(existing, input.metadata.appThreadKey, input.openclawSessionKey);
+                mapping = {
+                    ...existing,
+                    expectedArtifactDirs: input.metadata.expectedArtifactDirs,
+                    updatedAt: now,
+                    source: existing.source,
+                };
+            }
+            else {
+                mapping = compactObject({
+                    schemaVersion: 1,
+                    appThreadKey: input.metadata.appThreadKey,
+                    openclawSessionKey: input.openclawSessionKey,
+                    expectedArtifactDirs: input.metadata.expectedArtifactDirs,
+                    createdAt: input.metadata.createdAt || now,
+                    updatedAt: now,
+                    source: input.source,
+                });
+            }
             return {
-                ...state,
-                appSessionKey,
-                openClawSessionKey,
-                sessionId: optionalString(state.sessionId) || optionalString(ctx.sessionId),
+                pluginExtensions: writeMappingToPluginExtensions(entry.pluginExtensions, mapping),
             };
         },
     });
-}
-export async function recordXWorkmateSessionMapping(input) {
-    const appSessionKey = requiredString(input.params.sessionKey || input.params.appSessionKey, "sessionKey required");
-    const runId = requiredString(input.params.runId, "runId required");
-    const openClawSessionKey = optionalString(input.params.openClawSessionKey) ||
-        optionalString(input.params.openClawSessionId) ||
-        agentMainSessionKeyFor(appSessionKey);
-    const expectedArtifactDirs = stringList(input.params.expectedArtifactDirs);
-    const mapping = compactObject({
-        appSessionKey,
-        openClawSessionKey,
-        appThreadId: optionalString(input.params.threadId) || appSessionKey,
-        sessionId: optionalString(input.params.sessionId),
-        runId,
-        artifactScope: input.artifactScope || optionalString(input.params.artifactScope),
-        expectedArtifactDirs: expectedArtifactDirs.length > 0 ? expectedArtifactDirs : undefined,
-    });
-    input.taskStore.sessionMappingsByAppKey.set(appSessionKey, mapping);
-    input.taskStore.sessionMappingsByOpenClawKey.set(openClawSessionKey, mapping);
-    const patchSessionExtension = resolvePatchSessionExtension(input.api);
-    if (!patchSessionExtension) {
-        // Legacy fallback owner: this plugin. Scope: tests and OpenClaw hosts that do not expose
-        // session extension patching yet. Exit: remove this map once 2026.6.1+ hosts expose the patch
-        // method on the public plugin API in all supported deployments.
-        return;
+    if (!mapping) {
+        throw new Error("failed to write xworkmate session mapping");
     }
-    await patchSessionExtension({
-        key: openClawSessionKey,
-        sessionKey: openClawSessionKey,
-        pluginId: XWORKMATE_PLUGIN_ID,
-        namespace: XWORKMATE_SESSION_EXTENSION_NAMESPACE,
-        value: mapping,
-    });
+    return mapping;
 }
-export function registerXWorkmateDetachedTaskRuntime(api, taskStore) {
-    const registerRuntime = api.registerDetachedTaskRuntime;
-    if (typeof registerRuntime !== "function") {
-        return;
+export async function readXWorkmateSessionMapping(api, lookup) {
+    const getSessionEntry = resolveGetSessionEntry(api);
+    if (!getSessionEntry) {
+        return undefined;
     }
-    registerRuntime({
-        createQueuedTaskRun: (params) => createOrUpdateXWorkmateTaskRecord(taskStore, { params, status: "queued" }),
-        createRunningTaskRun: (params) => createOrUpdateXWorkmateTaskRecord(taskStore, { params, status: "running" }),
-        startTaskRunByRunId: (params) => updateXWorkmateTaskRecordsByRunId(taskStore, params, { status: "running", startedAt: Date.now() }),
-        recordTaskRunProgressByRunId: (params) => updateXWorkmateTaskRecordsByRunId(taskStore, params, {
-            lastEventAt: Date.now(),
-            progressSummary: optionalString(params.progressSummary) || optionalString(params.eventSummary),
-        }),
-        finalizeTaskRunByRunId: (params) => updateXWorkmateTaskRecordsByRunId(taskStore, params, terminalPatch(params)),
-        completeTaskRunByRunId: (params) => updateXWorkmateTaskRecordsByRunId(taskStore, params, {
-            status: "succeeded",
-            endedAt: numberOrNow(params.endedAt),
-            lastEventAt: numberOrNow(params.lastEventAt),
-            terminalSummary: optionalString(params.terminalSummary) || optionalString(params.progressSummary),
-            terminalOutcome: "succeeded",
-        }),
-        failTaskRunByRunId: (params) => updateXWorkmateTaskRecordsByRunId(taskStore, params, {
-            status: taskStatusFrom(params.status, "failed"),
-            endedAt: numberOrNow(params.endedAt),
-            lastEventAt: numberOrNow(params.lastEventAt),
-            error: optionalString(params.error),
-            terminalSummary: optionalString(params.terminalSummary) || optionalString(params.progressSummary),
-        }),
-        setDetachedTaskDeliveryStatusByRunId: (params) => updateXWorkmateTaskRecordsByRunId(taskStore, params, {
-            deliveryStatus: deliveryStatusFrom(params.deliveryStatus, "delivered"),
-            error: optionalString(params.error),
-        }),
-        cancelDetachedTaskRunById: async (params) => {
-            const taskId = optionalString(params.taskId);
-            const record = taskId ? findXWorkmateTaskByTaskId(taskStore, taskId) : undefined;
-            if (!record) {
-                return { found: false, cancelled: false };
-            }
-            record.status = "cancelled";
-            record.endedAt = Date.now();
-            record.lastEventAt = record.endedAt;
-            return { found: true, cancelled: true, reason: optionalString(params.reason), task: record };
-        },
-    });
+    const openclawSessionKey = optionalString(lookup.openclawSessionKey);
+    if (openclawSessionKey) {
+        return readMappingFromEntry(getSessionEntry({ sessionKey: openclawSessionKey }));
+    }
+    const appThreadKey = optionalString(lookup.appThreadKey);
+    if (!appThreadKey) {
+        return undefined;
+    }
+    const listSessionEntries = resolveListSessionEntries(api);
+    for (const item of listSessionEntries?.() ?? []) {
+        const mapping = readMappingFromEntry(item.entry);
+        if (mapping?.appThreadKey === appThreadKey) {
+            return mapping;
+        }
+    }
+    return undefined;
 }
 export async function getXWorkmateTaskSnapshot(input) {
-    const sessionKey = requiredString(input.params.sessionKey, "sessionKey required");
-    const runId = requiredString(input.params.runId, "runId required");
-    const mapping = resolveSessionMapping(input.taskStore, input.params, sessionKey);
-    const openClawSessionKey = mapping?.openClawSessionKey || optionalString(input.params.openClawSessionKey) || agentMainSessionKeyFor(sessionKey);
-    const appSessionKey = mapping?.appSessionKey || sessionKey;
-    const nativeTask = resolveNativeTask(input.api, openClawSessionKey, runId) || resolveNativeTask(input.api, sessionKey, runId);
-    const storedTask = findXWorkmateTask(input.taskStore, sessionKey, runId);
-    const exported = await exportXWorkmateArtifacts({
-        params: input.params,
-        config: input.api.config,
-        pluginConfig: input.api.pluginConfig,
+    const params = input.params ?? {};
+    const appThreadKey = optionalString(params.appThreadKey);
+    const explicitOpenclawSessionKey = optionalString(params.openclawSessionKey);
+    const mapping = await readXWorkmateSessionMapping(input.api, {
+        appThreadKey,
+        openclawSessionKey: explicitOpenclawSessionKey,
     });
-    const task = nativeTask || storedTask;
-    const taskStatus = normalizeTaskStatus(optionalString(task.status), exported.artifacts.length > 0);
-    if (storedTask && taskStatus === "succeeded" && storedTask.status !== "succeeded") {
-        storedTask.status = "succeeded";
-        storedTask.endedAt = Date.now();
-        storedTask.lastEventAt = storedTask.endedAt;
-        storedTask.terminalOutcome = "succeeded";
+    if (!mapping && appThreadKey && !explicitOpenclawSessionKey) {
+        return lookupError("mapping_not_found", `No OpenClaw session mapping found for ${appThreadKey}`);
     }
+    const openclawSessionKey = mapping?.openclawSessionKey || explicitOpenclawSessionKey;
+    if (!openclawSessionKey) {
+        return lookupError("invalid_lookup", "openclawSessionKey or appThreadKey required");
+    }
+    const runId = optionalString(params.runId);
+    const taskId = optionalString(params.taskId);
+    const task = resolveNativeTask(input.api, {
+        openclawSessionKey,
+        runId,
+        taskId,
+    });
+    if (!task) {
+        const code = runId || taskId ? "no_native_task_record" : "task_not_found";
+        return lookupError(code, `No native OpenClaw task record found for ${openclawSessionKey}`, mapping);
+    }
+    const taskStatus = optionalString(task.status) || "running";
+    const includeArtifacts = params.includeArtifacts !== false;
+    const exported = includeArtifacts
+        ? await exportXWorkmateArtifacts({
+            params: {
+                ...params,
+                openclawSessionKey,
+                runId: runId || optionalString(task.runId) || optionalString(task.taskId),
+                expectedArtifactDirs: mapping?.expectedArtifactDirs ?? normalizeExpectedArtifactDirs(params.expectedArtifactDirs),
+                includeContent: params.includeContent ?? false,
+            },
+            config: input.api.config,
+            pluginConfig: input.api.pluginConfig,
+        })
+        : undefined;
     return {
         success: true,
         status: appStatusFromTaskStatus(taskStatus),
         taskStatus,
         mode: "gateway-chat",
-        sessionKey,
-        openClawSessionKey,
-        appSessionKey,
-        runId,
+        mapping,
+        appThreadKey: mapping?.appThreadKey ?? appThreadKey,
+        openclawSessionKey,
+        runId: runId || optionalString(task.runId),
+        taskId: taskId || optionalString(task.taskId),
         task,
-        artifactScope: exported.artifactScope,
-        remoteWorkingDirectory: exported.remoteWorkingDirectory,
-        remoteWorkspaceRefKind: exported.remoteWorkspaceRefKind,
-        scopeKind: exported.scopeKind,
-        artifacts: exported.artifacts,
-        warnings: exported.warnings,
-        artifactCount: exported.artifacts.length,
+        expectedArtifactDirs: mapping?.expectedArtifactDirs ?? [],
+        artifactScope: exported?.artifactScope,
+        remoteWorkingDirectory: exported?.remoteWorkingDirectory,
+        remoteWorkspaceRefKind: exported?.remoteWorkspaceRefKind,
+        scopeKind: exported?.scopeKind,
+        artifacts: exported?.artifacts ?? [],
+        warnings: exported?.warnings ?? [],
+        artifactCount: exported?.artifacts.length ?? 0,
     };
 }
-export function createOrUpdateXWorkmateTaskRecord(input, options) {
-    const sessionKey = requiredString(options.params.sessionKey || options.params.requesterSessionKey, "sessionKey required");
-    const runId = requiredString(options.params.runId, "runId required");
-    const key = taskRecordKey(sessionKey, runId);
-    const now = Date.now();
-    const existing = input.records.get(key);
-    if (existing) {
-        existing.status = options.status;
-        existing.lastEventAt = now;
-        if (options.status === "running" && !existing.startedAt) {
-            existing.startedAt = now;
-        }
-        if (options.progressSummary) {
-            existing.progressSummary = options.progressSummary;
-        }
-        return existing;
-    }
-    const record = {
-        taskId: `xworkmate:${safeTaskIdSegment(sessionKey)}:${safeTaskIdSegment(runId)}`,
-        runtime: "acp",
-        taskKind: "xworkmate-openclaw",
-        requesterSessionKey: optionalString(options.params.openClawSessionKey) || agentMainSessionKeyFor(sessionKey),
-        ownerKey: sessionKey,
-        scopeKind: "session",
-        runId,
-        label: optionalString(options.params.label) || "XWorkmate OpenClaw task",
-        task: optionalString(options.params.taskPrompt) || optionalString(options.params.task) || "XWorkmate OpenClaw task",
-        status: options.status,
-        deliveryStatus: "pending",
-        notifyPolicy: "state_changes",
-        createdAt: now,
-        startedAt: options.status === "running" ? now : undefined,
-        lastEventAt: now,
-        progressSummary: options.progressSummary,
-    };
-    input.records.set(key, record);
-    return record;
-}
-function updateXWorkmateTaskRecordsByRunId(input, params, patch) {
-    const runId = optionalString(params.runId);
-    const sessionKey = optionalString(params.sessionKey || params.requesterSessionKey);
-    const records = [...input.records.values()].filter((record) => {
-        if (runId && record.runId !== runId) {
-            return false;
-        }
-        if (sessionKey && record.ownerKey !== sessionKey && record.requesterSessionKey !== sessionKey) {
-            return false;
-        }
-        return true;
-    });
-    for (const record of records) {
-        Object.assign(record, compactObject(patch));
-    }
-    return records;
-}
-function resolveNativeTask(api, sessionKey, runId) {
+function resolveNativeTask(api, input) {
     try {
-        const bound = api.runtime?.tasks?.runs?.bindSession?.({ sessionKey });
-        const resolved = bound?.resolve?.(runId) || bound?.get?.(runId);
+        const bound = api.runtime?.tasks?.runs?.bindSession?.({ sessionKey: input.openclawSessionKey });
+        if (!bound) {
+            return undefined;
+        }
+        const lookup = input.taskId || input.runId || "";
+        const resolved = lookup ? bound.resolve?.(lookup) || bound.get?.(lookup) : bound.findLatest?.();
         return asRecord(resolved);
     }
     catch (error) {
-        api.logger?.warn?.(`xworkmate task native registry lookup failed: sessionKey=${sessionKey} runId=${runId} error=${String(error)}`);
+        api.logger?.warn?.(`xworkmate native task lookup failed: sessionKey=${input.openclawSessionKey} error=${String(error)}`);
         return undefined;
     }
 }
-function resolveSessionMapping(input, params, sessionKey) {
-    const explicitOpenClawKey = optionalString(params.openClawSessionKey);
-    if (explicitOpenClawKey) {
-        const byOpenClaw = input.sessionMappingsByOpenClawKey.get(explicitOpenClawKey);
-        if (byOpenClaw) {
-            return byOpenClaw;
-        }
-    }
-    return input.sessionMappingsByAppKey.get(sessionKey) || input.sessionMappingsByOpenClawKey.get(sessionKey);
-}
-function findXWorkmateTask(input, sessionKey, runId) {
-    return input.records.get(taskRecordKey(sessionKey, runId));
-}
-function findXWorkmateTaskByTaskId(input, taskId) {
-    return [...input.records.values()].find((record) => record.taskId === taskId);
-}
-function taskRecordKey(sessionKey, runId) {
-    return `${sessionKey}\u0000${runId}`;
-}
-function appSessionKeyFromOpenClawSessionKey(sessionKey) {
-    return sessionKey.startsWith("agent:main:") ? sessionKey.slice("agent:main:".length) : sessionKey;
-}
-function agentMainSessionKeyFor(sessionKey) {
-    return sessionKey.startsWith("agent:") ? sessionKey : `agent:main:${sessionKey}`;
-}
-function terminalPatch(params) {
-    const status = taskStatusFrom(params.status, "succeeded");
+function lookupError(code, message, mapping) {
     return {
-        status,
-        endedAt: numberOrNow(params.endedAt),
-        lastEventAt: numberOrNow(params.lastEventAt),
-        error: optionalString(params.error),
-        progressSummary: optionalString(params.progressSummary),
-        terminalSummary: optionalString(params.terminalSummary),
-        terminalOutcome: status === "succeeded" ? "succeeded" : "blocked",
+        ok: false,
+        code,
+        message,
+        ...(mapping ? { mapping, expectedArtifactDirs: mapping.expectedArtifactDirs } : {}),
     };
 }
-function normalizeTaskStatus(status, hasArtifacts) {
-    const normalized = taskStatusFrom(status, hasArtifacts ? "succeeded" : "running");
-    if (normalized === "running" && hasArtifacts) {
-        return "succeeded";
+function readMappingFromEntry(entry) {
+    const pluginState = asRecord(entry?.pluginExtensions?.[XWORKMATE_PLUGIN_ID]);
+    const raw = asRecord(pluginState?.[XWORKMATE_SESSION_EXTENSION_NAMESPACE]);
+    if (!raw || raw.schemaVersion !== 1) {
+        return undefined;
     }
-    return normalized;
+    const appThreadKey = optionalString(raw.appThreadKey);
+    const openclawSessionKey = optionalString(raw.openclawSessionKey);
+    if (!appThreadKey || !openclawSessionKey) {
+        return undefined;
+    }
+    return {
+        schemaVersion: 1,
+        appThreadKey,
+        openclawSessionKey,
+        expectedArtifactDirs: normalizeExpectedArtifactDirs(raw.expectedArtifactDirs),
+        createdAt: optionalString(raw.createdAt) || new Date(0).toISOString(),
+        updatedAt: optionalString(raw.updatedAt) || optionalString(raw.createdAt) || new Date(0).toISOString(),
+        source: parseMappingSource(raw.source),
+    };
+}
+function writeMappingToPluginExtensions(current, mapping) {
+    if (!mapping) {
+        return current;
+    }
+    return {
+        ...(current ?? {}),
+        [XWORKMATE_PLUGIN_ID]: {
+            ...(current?.[XWORKMATE_PLUGIN_ID] ?? {}),
+            [XWORKMATE_SESSION_EXTENSION_NAMESPACE]: mapping,
+        },
+    };
+}
+function assertMappingCompatible(existing, appThreadKey, openclawSessionKey) {
+    if (existing.appThreadKey !== appThreadKey || existing.openclawSessionKey !== openclawSessionKey) {
+        throw new Error("conflict: xworkmate session mapping already points to a different session");
+    }
+}
+function resolvePatchSessionEntry(api) {
+    const runtimeSession = (api.runtime?.agent?.session ?? {});
+    const candidate = runtimeSession.patchSessionEntry;
+    return typeof candidate === "function" ? candidate : undefined;
+}
+function resolveGetSessionEntry(api) {
+    const runtimeSession = (api.runtime?.agent?.session ?? {});
+    const candidate = runtimeSession.getSessionEntry;
+    return typeof candidate === "function" ? candidate : undefined;
+}
+function resolveListSessionEntries(api) {
+    const runtimeSession = (api.runtime?.agent?.session ?? {});
+    const candidate = runtimeSession.listSessionEntries;
+    return typeof candidate === "function"
+        ? candidate
+        : undefined;
 }
 function appStatusFromTaskStatus(status) {
     if (status === "succeeded") {
@@ -270,38 +287,12 @@ function appStatusFromTaskStatus(status) {
     }
     return "running";
 }
-function taskStatusFrom(value, fallback) {
-    const status = optionalString(value);
-    if (status === "queued" ||
-        status === "running" ||
-        status === "succeeded" ||
-        status === "failed" ||
-        status === "timed_out" ||
-        status === "cancelled" ||
-        status === "lost") {
-        return status;
+function parseMappingSource(value) {
+    const source = optionalString(value);
+    if (source === "session_start" || source === "bridge_prepare") {
+        return source;
     }
-    return fallback;
-}
-function deliveryStatusFrom(value, fallback) {
-    const status = optionalString(value);
-    if (status === "pending" ||
-        status === "delivered" ||
-        status === "session_queued" ||
-        status === "failed" ||
-        status === "parent_missing" ||
-        status === "not_applicable") {
-        return status;
-    }
-    return fallback;
-}
-function resolvePatchSessionExtension(api) {
-    const stateApi = (api.session?.state ?? {});
-    const apiRecord = api;
-    const candidate = stateApi.patchSessionExtension || apiRecord.patchSessionExtension;
-    return typeof candidate === "function"
-        ? candidate
-        : undefined;
+    return "bridge_prepare";
 }
 function requiredString(value, message) {
     const text = optionalString(value);
@@ -317,26 +308,6 @@ function optionalString(value) {
     const text = String(value).trim();
     return text === "<nil>" ? "" : text;
 }
-function stringList(value) {
-    if (!Array.isArray(value)) {
-        return [];
-    }
-    const seen = new Set();
-    const result = [];
-    for (const entry of value) {
-        const text = optionalString(entry);
-        if (!text || seen.has(text)) {
-            continue;
-        }
-        seen.add(text);
-        result.push(text);
-    }
-    return result;
-}
-function numberOrNow(value) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : Date.now();
-}
 function asRecord(value) {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
         return undefined;
@@ -345,7 +316,4 @@ function asRecord(value) {
 }
 function compactObject(value) {
     return Object.fromEntries(Object.entries(value).filter((entry) => entry[1] !== undefined && entry[1] !== ""));
-}
-function safeTaskIdSegment(value) {
-    return value.replace(/[^A-Za-z0-9._:-]+/g, "_");
 }

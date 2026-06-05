@@ -20,6 +20,8 @@ export type XWorkmateArtifactExport = {
     scopeKind: XWorkmateArtifactScopeKind;
     artifacts: XWorkmateArtifact[];
     warnings: string[];
+    expectedArtifactDirs: string[];
+    expectedArtifactDirStatus: XWorkmateExpectedArtifactDirStatus[];
 };
 export type XWorkmateArtifactPrepare = {
     runId: string;
@@ -31,6 +33,12 @@ export type XWorkmateArtifactPrepare = {
     artifactDirectory: string;
     relativeArtifactDirectory: string;
     warnings: string[];
+    expectedArtifactDirs: string[];
+    expectedArtifactDirStatus: XWorkmateExpectedArtifactDirStatus[];
+};
+export type XWorkmateExpectedArtifactDirStatus = {
+    relativePath: string;
+    exists: boolean;
 };
 export type XWorkmateArtifactSnapshot = {
     runId: string;
@@ -58,6 +66,7 @@ export declare function prepareXWorkmateArtifacts(input: ExportInput): Promise<X
 export declare function collectAndSnapshotXWorkmateArtifacts(input: ExportInput): Promise<XWorkmateArtifactSnapshot>;
 export declare function exportXWorkmateArtifacts(input: ExportInput): Promise<XWorkmateArtifactExport>;
 export declare function readXWorkmateArtifact(input: ReadInput): Promise<XWorkmateArtifactExport>;
+export declare function normalizeExpectedArtifactDirs(value: unknown): string[];
 export declare function formatArtifactManifestMarkdown(input: {
     remoteWorkingDirectory: string;
     artifactScope?: string;

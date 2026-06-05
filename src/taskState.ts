@@ -26,7 +26,6 @@ export type XWorkmateSessionMappingV1 = {
   createdAt: string;
   updatedAt: string;
   source: XWorkmateSessionMappingSource;
-  legacyDerived?: boolean;
 };
 
 export type XWorkmateTaskLookupErrorCode =
@@ -160,7 +159,6 @@ export async function upsertXWorkmateSessionMapping(
     metadata: XWorkmateTaskMetadataV1;
     openclawSessionKey: string;
     source: XWorkmateSessionMappingSource;
-    legacyDerived?: boolean;
   },
 ): Promise<XWorkmateSessionMappingV1> {
   const patchSessionEntry = resolvePatchSessionEntry(api);
@@ -192,7 +190,6 @@ export async function upsertXWorkmateSessionMapping(
           createdAt: input.metadata.createdAt || now,
           updatedAt: now,
           source: input.source,
-          legacyDerived: input.legacyDerived === true ? true : undefined,
         }) as XWorkmateSessionMappingV1;
       }
       return {
@@ -360,7 +357,6 @@ function readMappingFromEntry(entry: SessionEntry | undefined | null): XWorkmate
     createdAt: optionalString(raw.createdAt) || new Date(0).toISOString(),
     updatedAt: optionalString(raw.updatedAt) || optionalString(raw.createdAt) || new Date(0).toISOString(),
     source: parseMappingSource(raw.source),
-    ...(raw.legacyDerived === true ? { legacyDerived: true } : {}),
   };
 }
 
