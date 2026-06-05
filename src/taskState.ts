@@ -43,8 +43,6 @@ export type XWorkmateTaskLookupError = {
   expectedArtifactDirs?: string[];
 };
 
-export type XWorkmateTaskStore = Record<string, never>;
-
 type SessionEntry = Record<string, unknown> & {
   pluginExtensions?: Record<string, Record<string, unknown>>;
 };
@@ -64,10 +62,6 @@ type BoundTaskRunsRuntime = {
   resolve?: (token: string) => unknown;
 };
 
-export function createXWorkmateTaskStore(): XWorkmateTaskStore {
-  return {};
-}
-
 export function registerXWorkmateSessionExtension(api: OpenClawPluginApi) {
   const registerExtension =
     api.session?.state?.registerSessionExtension ?? (api as any).registerSessionExtension;
@@ -85,13 +79,8 @@ export function registerXWorkmateSessionExtension(api: OpenClawPluginApi) {
   });
 }
 
-export function registerXWorkmateDetachedTaskRuntime(_api: OpenClawPluginApi, _taskStore: XWorkmateTaskStore) {
-  // OpenClaw native task-registry is the only task status source for this plugin.
-}
-
 export async function recordXWorkmateSessionMapping(input: {
   api: OpenClawPluginApi;
-  taskStore?: XWorkmateTaskStore;
   params: Record<string, unknown>;
   artifactScope?: string;
   source?: XWorkmateSessionMappingSource;
@@ -235,7 +224,6 @@ export async function readXWorkmateSessionMapping(
 
 export async function getXWorkmateTaskSnapshot(input: {
   api: OpenClawPluginApi;
-  taskStore?: XWorkmateTaskStore;
   params: Record<string, unknown>;
 }): Promise<Record<string, unknown>> {
   const params = input.params ?? {};

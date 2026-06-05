@@ -117,7 +117,7 @@ export async function prepareXWorkmateArtifacts(input: ExportInput): Promise<XWo
   const params = input.params ?? {};
   const pluginConfig = input.pluginConfig ?? {};
   const runId = requiredString(params.runId, "runId required");
-  const sessionKey = requiredString(params.openclawSessionKey ?? params.sessionKey, "openclawSessionKey required");
+  const sessionKey = requiredString(params.openclawSessionKey, "openclawSessionKey required");
   const expectedArtifactDirs = normalizeExpectedArtifactDirs(params.expectedArtifactDirs);
   const expectedArtifactScope = artifactScopeFor(sessionKey, runId);
   const requestedArtifactScope = optionalArtifactScope(params.artifactScope);
@@ -154,7 +154,7 @@ export async function collectAndSnapshotXWorkmateArtifacts(input: ExportInput): 
   const params = input.params ?? {};
   const pluginConfig = input.pluginConfig ?? {};
   const runId = requiredString(params.runId, "runId required");
-  const sessionKey = requiredString(params.openclawSessionKey ?? params.sessionKey, "openclawSessionKey required");
+  const sessionKey = requiredString(params.openclawSessionKey, "openclawSessionKey required");
   const sinceUnixMs = nonNegativeNumber(params.sinceUnixMs, 0);
   const maxFiles = positiveInteger(params.maxFiles, pluginConfig.snapshotMaxFiles, DEFAULT_MAX_FILES);
   const expectedArtifactScope = artifactScopeFor(sessionKey, runId);
@@ -224,7 +224,7 @@ export async function exportXWorkmateArtifacts(input: ExportInput): Promise<XWor
   const params = input.params ?? {};
   const pluginConfig = input.pluginConfig ?? {};
   const runId = requiredString(params.runId, "runId required");
-  const sessionKey = requiredString(params.openclawSessionKey ?? params.sessionKey, "openclawSessionKey required");
+  const sessionKey = requiredString(params.openclawSessionKey, "openclawSessionKey required");
 
   const maxFiles = positiveInteger(params.maxFiles, pluginConfig.maxFiles, DEFAULT_MAX_FILES);
   const maxInlineBytes = nonNegativeInteger(
@@ -261,7 +261,9 @@ export async function exportXWorkmateArtifacts(input: ExportInput): Promise<XWor
     try {
       const scopeStat = await fs.stat(scopeRoot);
       effectiveSince = Math.min(sinceUnixMs, scopeStat.birthtimeMs || scopeStat.mtimeMs);
-    } catch {}
+    } catch (error) {
+      warnings.push(`Unable to read artifact scope timestamp: ${String(error)}`);
+    }
   }
   const scopedCandidates = (await directoryExists(scopeRoot))
     ? await collectCandidates({
@@ -368,7 +370,7 @@ export async function readXWorkmateArtifact(input: ReadInput): Promise<XWorkmate
   const params = input.params ?? {};
   const pluginConfig = input.pluginConfig ?? {};
   const runId = requiredString(params.runId, "runId required");
-  const sessionKey = requiredString(params.openclawSessionKey ?? params.sessionKey, "openclawSessionKey required");
+  const sessionKey = requiredString(params.openclawSessionKey, "openclawSessionKey required");
   const expectedArtifactScope = artifactScopeFor(sessionKey, runId);
   const expectedSessionScope = taskSessionScopeFor(sessionKey);
   const requestedArtifactRef = optionalString(params.artifactRef);

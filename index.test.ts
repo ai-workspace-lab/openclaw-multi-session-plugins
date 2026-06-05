@@ -92,12 +92,12 @@ describe("plugin registration", () => {
       openclawSessionKey: "thread-main",
       runId: "turn-1",
     });
-    console.log(prepared); expect(prepared.ok).toBe(true);
+    expect(prepared.ok).toBe(true);
     expect(prepared.payload?.artifactScope).toBe("tasks/thread-main/turn-1");
     const artifactDirectory = String(prepared.payload?.artifactDirectory);
 
     const emptyExport = await callGatewayMethod(methods, "xworkmate.artifacts.export", {
-      sessionKey: "thread-main",
+      openclawSessionKey: "thread-main",
       runId: "turn-1",
       artifactScope: prepared.payload?.artifactScope,
     });
@@ -109,7 +109,7 @@ describe("plugin registration", () => {
     await fs.promises.writeFile(path.join(artifactDirectory, "reports", "final.md"), "final");
 
     const listed = await callGatewayMethod(methods, "xworkmate.artifacts.list", {
-      sessionKey: "thread-main",
+      openclawSessionKey: "thread-main",
       runId: "turn-1",
       artifactScope: prepared.payload?.artifactScope,
     });
@@ -119,7 +119,7 @@ describe("plugin registration", () => {
     expect(listedArtifacts[0]).not.toHaveProperty("content");
 
     const read = await callGatewayMethod(methods, "xworkmate.artifacts.read", {
-      sessionKey: "thread-main",
+      openclawSessionKey: "thread-main",
       runId: "turn-1",
       artifactScope: prepared.payload?.artifactScope,
       relativePath: "reports/final.md",
@@ -128,7 +128,7 @@ describe("plugin registration", () => {
     expect(read.payload?.artifacts).toMatchObject([{ relativePath: "reports/final.md", encoding: "base64" }]);
 
     const unprepared = await callGatewayMethod(methods, "xworkmate.artifacts.export", {
-      sessionKey: "thread-main",
+      openclawSessionKey: "thread-main",
       runId: "turn-unprepared",
     });
     expect(unprepared.ok).toBe(true);
@@ -211,15 +211,21 @@ describe("plugin registration", () => {
       sessionEntrySlotKey: "xworkmate",
     });
     const projected = (sessionExtensions[0]?.project as (ctx: Record<string, unknown>) => unknown)({
-      sessionKey: "draft:1780636411666238-3",
+      openclawSessionKey: "draft:1780636411666238-3",
       state: {},
     });
     expect(projected).toMatchObject({});
     expect(detachedRuntimes).toHaveLength(0);
 
     await hooks.get("session_start")?.({
+      appThreadKey: "draft:legacy-session-key-only",
+      sessionKey: "draft:legacy-session-key-only",
+      runId: "turn-legacy",
+    });
+    expect(sessionExtensionPatches).toHaveLength(0);
+
+    await hooks.get("session_start")?.({
       appThreadKey: "draft:1780636411666238-3",
-      sessionKey: "draft-1780636411666238-3",
       openclawSessionKey: "draft:1780636411666238-3",
       threadId: "draft-1780636411666238-3",
       runId: "turn-1",
@@ -302,11 +308,11 @@ describe("plugin registration", () => {
   it("uses host context scope for the optional agent tool", async () => {
     const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-tool-"));
     const current = await prepareXWorkmateArtifacts({
-      params: { sessionKey: "thread-main", runId: "turn-1" },
+      params: { openclawSessionKey: "thread-main", runId: "turn-1" },
       pluginConfig: { workspaceDir: root },
     });
     const other = await prepareXWorkmateArtifacts({
-      params: { sessionKey: "thread-main", runId: "turn-2" },
+      params: { openclawSessionKey: "thread-main", runId: "turn-2" },
       pluginConfig: { workspaceDir: root },
     });
     await fs.promises.writeFile(path.join(current.artifactDirectory, "current.txt"), "current");
@@ -340,7 +346,7 @@ describe("plugin registration", () => {
     });
     const result = await tool.execute("call-1", {
       action: "list",
-      sessionKey: "thread-other",
+      openclawSessionKey: "thread-other",
       runId: "turn-2",
       workspaceDir: "/",
     });

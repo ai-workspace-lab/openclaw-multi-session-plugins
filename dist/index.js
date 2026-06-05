@@ -1,6 +1,6 @@
 import { getPluginRuntimeGatewayRequestScope } from "openclaw/plugin-sdk/plugin-runtime";
 import { collectAndSnapshotXWorkmateArtifacts, exportXWorkmateArtifacts, prepareXWorkmateArtifacts, readXWorkmateArtifact, formatArtifactManifestMarkdown, } from "./src/exportArtifacts.js";
-import { getXWorkmateTaskSnapshot, recordXWorkmateSessionMapping, registerXWorkmateDetachedTaskRuntime, registerXWorkmateSessionExtension, } from "./src/taskState.js";
+import { getXWorkmateTaskSnapshot, recordXWorkmateSessionMapping, registerXWorkmateSessionExtension, } from "./src/taskState.js";
 function scopedGatewayParams(params) {
     const sessionScope = getPluginRuntimeGatewayRequestScope()?.sessionScope;
     const runScope = resolveRunScope({ sessionScope });
@@ -9,7 +9,7 @@ function scopedGatewayParams(params) {
     }
     return {
         ...params,
-        sessionKey: runScope.sessionKey,
+        openclawSessionKey: runScope.sessionKey,
         runId: runScope.runId,
         ...(runScope.workspaceDir ? { workspaceDir: runScope.workspaceDir } : {}),
         ...(runScope.artifactScope ? { artifactScope: runScope.artifactScope } : {}),
@@ -40,13 +40,11 @@ const plugin = {
 };
 export default plugin;
 function register(api) {
-    const taskStore = {};
     registerXWorkmateSessionExtension(api);
-    registerXWorkmateDetachedTaskRuntime(api, taskStore);
     api.registerHook("session_start", async (event) => {
         try {
             const params = scopedGatewayParams(event?.context ?? event);
-            const openclawSessionKey = stringParam(params.openclawSessionKey) || stringParam(params.sessionKey);
+            const openclawSessionKey = stringParam(params.openclawSessionKey);
             if (openclawSessionKey && params.runId) {
                 const hookParams = { ...params, openclawSessionKey };
                 const prepared = await prepareXWorkmateArtifacts({
@@ -56,7 +54,6 @@ function register(api) {
                 });
                 await recordXWorkmateSessionMapping({
                     api,
-                    taskStore,
                     params: hookParams,
                     artifactScope: prepared.artifactScope,
                     source: "session_start",
@@ -72,7 +69,6 @@ function register(api) {
             const params = scopedGatewayParams(opts.params);
             const mapping = await recordXWorkmateSessionMapping({
                 api,
-                taskStore,
                 params,
                 source: "bridge_prepare",
             });
@@ -104,7 +100,6 @@ function register(api) {
         try {
             const payload = await getXWorkmateTaskSnapshot({
                 api,
-                taskStore,
                 params: scopedGatewayParams(opts.params),
             });
             opts.respond(true, payload, undefined);
@@ -238,10 +233,10 @@ function createXWorkmateArtifactsTool(api, ctx) {
                 throw new Error("runId required");
             }
             const workspaceDir = ctx.sessionScope?.workspaceDir || ctx.workspaceDir;
-            const { sessionKey: _ignoredSessionKey, runId: _ignoredRunId, workspaceDir: _ignoredWorkspaceDir, ...operationParams } = params;
+            const { sessionKey: _ignoredSessionKey, openclawSessionKey: _ignoredOpenclawSessionKey, runId: _ignoredRunId, workspaceDir: _ignoredWorkspaceDir, ...operationParams } = params;
             const baseParams = {
                 ...operationParams,
-                sessionKey,
+                openclawSessionKey: sessionKey,
                 runId,
                 ...(workspaceDir ? { workspaceDir } : {}),
                 ...(runScope?.artifactScope ? { artifactScope: runScope.artifactScope } : {}),

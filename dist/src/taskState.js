@@ -1,9 +1,6 @@
 import { exportXWorkmateArtifacts } from "./exportArtifacts.js";
 export const XWORKMATE_PLUGIN_ID = "openclaw-multi-session-plugins";
 export const XWORKMATE_SESSION_EXTENSION_NAMESPACE = "xworkmate.sessionMapping";
-export function createXWorkmateTaskStore() {
-    return {};
-}
 export function registerXWorkmateSessionExtension(api) {
     const registerExtension = api.session?.state?.registerSessionExtension ?? api.registerSessionExtension;
     if (typeof registerExtension !== "function") {
@@ -18,9 +15,6 @@ export function registerXWorkmateSessionExtension(api) {
             return state ?? {};
         },
     });
-}
-export function registerXWorkmateDetachedTaskRuntime(_api, _taskStore) {
-    // OpenClaw native task-registry is the only task status source for this plugin.
 }
 export async function recordXWorkmateSessionMapping(input) {
     const metadata = normalizeXWorkmateTaskMetadataV1(input.params);

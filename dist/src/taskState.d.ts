@@ -28,13 +28,9 @@ export type XWorkmateTaskLookupError = {
     mapping?: XWorkmateSessionMappingV1;
     expectedArtifactDirs?: string[];
 };
-export type XWorkmateTaskStore = Record<string, never>;
-export declare function createXWorkmateTaskStore(): XWorkmateTaskStore;
 export declare function registerXWorkmateSessionExtension(api: OpenClawPluginApi): void;
-export declare function registerXWorkmateDetachedTaskRuntime(_api: OpenClawPluginApi, _taskStore: XWorkmateTaskStore): void;
 export declare function recordXWorkmateSessionMapping(input: {
     api: OpenClawPluginApi;
-    taskStore?: XWorkmateTaskStore;
     params: Record<string, unknown>;
     artifactScope?: string;
     source?: XWorkmateSessionMappingSource;
@@ -52,6 +48,5 @@ export declare function readXWorkmateSessionMapping(api: OpenClawPluginApi, look
 }): Promise<XWorkmateSessionMappingV1 | undefined>;
 export declare function getXWorkmateTaskSnapshot(input: {
     api: OpenClawPluginApi;
-    taskStore?: XWorkmateTaskStore;
     params: Record<string, unknown>;
 }): Promise<Record<string, unknown>>;
