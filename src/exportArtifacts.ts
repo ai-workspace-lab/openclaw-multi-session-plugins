@@ -44,7 +44,6 @@ export type XWorkmateArtifactExport = {
   scopeKind: XWorkmateArtifactScopeKind;
   artifacts: XWorkmateArtifact[];
   warnings: string[];
-  manifestMarkdown: string;
 };
 
 export type XWorkmateArtifactPrepare = {
@@ -349,10 +348,7 @@ export async function exportXWorkmateArtifacts(input: ExportInput): Promise<XWor
     artifacts,
     warnings,
   };
-  return {
-    ...result,
-    manifestMarkdown: formatArtifactManifestMarkdown(result),
-  };
+  return result;
 }
 
 export async function readXWorkmateArtifact(input: ReadInput): Promise<XWorkmateArtifactExport> {
@@ -461,13 +457,10 @@ export async function readXWorkmateArtifact(input: ReadInput): Promise<XWorkmate
     artifacts: [artifact],
     warnings,
   };
-  return {
-    ...result,
-    manifestMarkdown: formatArtifactManifestMarkdown(result),
-  };
+  return result;
 }
 
-function formatArtifactManifestMarkdown(input: {
+export function formatArtifactManifestMarkdown(input: {
   remoteWorkingDirectory: string;
   artifactScope?: string;
   scopeKind?: XWorkmateArtifactScopeKind;
@@ -990,21 +983,7 @@ function contentTypeForPath(relativePath: string): string {
 }
 
 function openClawSnapshotSources(params: Record<string, unknown>, pluginConfig: Record<string, unknown>): SnapshotSource[] {
-  const configured = Array.isArray(params.snapshotSourceRoots)
-    ? params.snapshotSourceRoots
-    : Array.isArray(pluginConfig.snapshotSourceRoots)
-      ? pluginConfig.snapshotSourceRoots
-      : undefined;
-  if (configured) {
-    return configured
-      .map((entry, index) => {
-        const record = objectRecord(entry);
-        const root = optionalString(record.root);
-        const label = safeScopeSegment(optionalString(record.label) || `source-${index + 1}`);
-        return root ? { label, root: expandUserPath(root) } : undefined;
-      })
-      .filter((entry): entry is SnapshotSource => Boolean(entry));
-  }
+  
   return [
     {
       label: "media",

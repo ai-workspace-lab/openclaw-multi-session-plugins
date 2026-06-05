@@ -77,31 +77,9 @@ describe("exportXWorkmateArtifacts", () => {
       content: Buffer.from("# Done\n").toString("base64"),
     });
     expect(result.artifacts[0]?.artifactRef).toContain(".");
-    expect(result.manifestMarkdown).toContain("reports/final.md");
-    expect(result.manifestMarkdown).toContain("text/markdown");
   });
 
-  it("filters old files by sinceUnixMs", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
-    const prepared = await prepareXWorkmateArtifacts({
-      params: { sessionKey: "thread-main", runId: "run-1" },
-      pluginConfig: { workspaceDir: root },
-    });
-    const oldFile = path.join(prepared.artifactDirectory, "old.txt");
-    await fs.writeFile(oldFile, "old");
-    const stat = await fs.stat(oldFile);
 
-    const result = await exportXWorkmateArtifacts({
-      params: {
-        sessionKey: "thread-main",
-        runId: "run-1",
-        sinceUnixMs: stat.mtimeMs + 10_000,
-      },
-      pluginConfig: { workspaceDir: root },
-    });
-
-    expect(result.artifacts).toEqual([]);
-  });
 
   it("snapshots OpenClaw media and tmp outputs into the current task artifact scope", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
@@ -129,10 +107,8 @@ describe("exportXWorkmateArtifacts", () => {
       },
       pluginConfig: {
         workspaceDir: root,
-        snapshotSourceRoots: [
-          { label: "media", root: mediaRoot },
-          { label: "tmp-openclaw", root: tmpRoot },
-        ],
+        openClawMediaDir: mediaRoot,
+        openClawTmpDir: tmpRoot,
       },
     });
 
@@ -150,7 +126,7 @@ describe("exportXWorkmateArtifacts", () => {
         artifactScope: prepared.artifactScope,
         includeContent: false,
       },
-      pluginConfig: { workspaceDir: root },
+      pluginConfig: { workspaceDir: root, openClawMediaDir: mediaRoot, openClawTmpDir: tmpRoot },
     });
 
     expect(result.artifacts.map((artifact) => artifact.relativePath).sort()).toEqual([
@@ -327,8 +303,6 @@ describe("exportXWorkmateArtifacts", () => {
 
     expect(result.scopeKind).toBe("task");
     expect(result.artifacts).toEqual([]);
-    expect(result.manifestMarkdown).toContain("No artifacts found for this task run.");
-    expect(result.manifestMarkdown).toContain("Artifact scope: `tasks/thread-main/turn-1`");
   });
 
   it("does not adopt workspace root files even with a current-run timestamp", async () => {

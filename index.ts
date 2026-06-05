@@ -9,6 +9,7 @@ import {
   exportXWorkmateArtifacts,
   prepareXWorkmateArtifacts,
   readXWorkmateArtifact,
+  formatArtifactManifestMarkdown,
 } from "./src/exportArtifacts.js";
 import { runXWorkmateBridgeAgents } from "./src/bridgeAgents.js";
 
@@ -275,7 +276,7 @@ function createXWorkmateArtifactsTool(
           config: ctx.config ?? api.config,
           pluginConfig: api.pluginConfig,
         });
-        return { content: [{ type: "text", text: payload.manifestMarkdown }], details: {} };
+        return { content: [{ type: "text", text: formatArtifactManifestMarkdown(payload) }], details: {} };
       }
       if (action === "read") {
         const payload = await readXWorkmateArtifact({
@@ -286,13 +287,13 @@ function createXWorkmateArtifactsTool(
         const artifact = payload.artifacts[0];
         const text = artifact
           ? [
-              payload.manifestMarkdown,
+              formatArtifactManifestMarkdown(payload),
               "",
               artifact.content
                 ? `Base64 content for \`${artifact.relativePath}\`:\n\n\`\`\`base64\n${artifact.content}\n\`\`\``
                 : `\`${artifact.relativePath}\` is larger than maxInlineBytes; use the workspace path to download it directly.`,
             ].join("\n")
-          : payload.manifestMarkdown;
+          : formatArtifactManifestMarkdown(payload);
         return { content: [{ type: "text", text }], details: {} };
       }
       throw new Error("action must be list or read");
@@ -392,7 +393,7 @@ function createXWorkmateAgentsTool(
           ? payload.bridgeResult.output
           : "Multi-agent run completed.";
       return {
-        content: [{ type: "text", text: [summary, "", payload.manifestMarkdown].join("\n") }],
+        content: [{ type: "text", text: [summary, "", formatArtifactManifestMarkdown(payload)].join("\n") }],
         details: { artifacts: payload.artifacts, bridgeResult: payload.bridgeResult },
       };
     },

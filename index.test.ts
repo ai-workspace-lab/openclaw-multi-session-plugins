@@ -42,6 +42,8 @@ describe("plugin registration", () => {
       registerTool: (tool: unknown, options: unknown) => {
         tools.push({ tool, options });
       },
+      registerHook: () => undefined,
+
     } as unknown as OpenClawPluginApi;
 
     plugin.register(api);
@@ -76,6 +78,7 @@ describe("plugin registration", () => {
         methods.set(method, handler);
       },
       registerTool: () => undefined,
+      registerHook: () => undefined,
     } as unknown as OpenClawPluginApi;
 
     plugin.register(api);
@@ -126,7 +129,6 @@ describe("plugin registration", () => {
     expect(unprepared.ok).toBe(true);
     expect(unprepared.payload?.artifacts).toEqual([]);
     expect(unprepared.payload?.warnings).toEqual(["artifact scope is not prepared for this task run"]);
-    expect(unprepared.payload?.manifestMarkdown).toContain("No artifacts found for this task run.");
   });
 
   it("does not invent default session or run ids for the optional agent tool", async () => {
@@ -135,9 +137,12 @@ describe("plugin registration", () => {
       config: {},
       pluginConfig: { workspaceDir: path.join(os.tmpdir(), "openclaw-multi-session-tool-test") },
       registerGatewayMethod: () => undefined,
+      registerHook: () => undefined,
       registerTool: (tool: unknown, options: unknown) => {
         tools.push({ tool, options });
       },
+      registerHook: () => undefined,
+
     } as unknown as OpenClawPluginApi;
 
     plugin.register(api);
@@ -163,6 +168,7 @@ describe("plugin registration", () => {
       config: {},
       pluginConfig: {},
       registerGatewayMethod: () => undefined,
+      registerHook: () => undefined,
       registerTool: (tool: unknown, options: { names?: string[] }) => {
         tools.push({ tool, options });
       },
@@ -192,6 +198,7 @@ describe("plugin registration", () => {
       config: {},
       pluginConfig: { workspaceDir: await fs.promises.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-agent-token-")), bridgeUrl: "http://127.0.0.1:1" },
       registerGatewayMethod: () => undefined,
+      registerHook: () => undefined,
       registerTool: (tool: unknown, options: { names?: string[] }) => {
         tools.push({ tool, options });
       },
@@ -262,6 +269,7 @@ describe("plugin registration", () => {
           bridgeToken: "bridge-token",
         },
         registerGatewayMethod: () => undefined,
+      registerHook: () => undefined,
         registerTool: (tool: unknown, options: { names?: string[] }) => {
           tools.push({ tool, options });
         },
@@ -330,9 +338,12 @@ describe("plugin registration", () => {
       config: {},
       pluginConfig: {},
       registerGatewayMethod: () => undefined,
+      registerHook: () => undefined,
       registerTool: (tool: unknown, options: unknown) => {
         tools.push({ tool, options });
       },
+      registerHook: () => undefined,
+
     } as unknown as OpenClawPluginApi;
 
     plugin.register(api);

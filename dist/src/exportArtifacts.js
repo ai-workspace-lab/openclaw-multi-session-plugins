@@ -246,10 +246,7 @@ export async function exportXWorkmateArtifacts(input) {
         artifacts,
         warnings,
     };
-    return {
-        ...result,
-        manifestMarkdown: formatArtifactManifestMarkdown(result),
-    };
+    return result;
 }
 export async function readXWorkmateArtifact(input) {
     const params = input.params ?? {};
@@ -351,12 +348,9 @@ export async function readXWorkmateArtifact(input) {
         artifacts: [artifact],
         warnings,
     };
-    return {
-        ...result,
-        manifestMarkdown: formatArtifactManifestMarkdown(result),
-    };
+    return result;
 }
-function formatArtifactManifestMarkdown(input) {
+export function formatArtifactManifestMarkdown(input) {
     const lines = [
         "## XWorkmate artifacts",
         "",
@@ -814,21 +808,6 @@ function contentTypeForPath(relativePath) {
     }
 }
 function openClawSnapshotSources(params, pluginConfig) {
-    const configured = Array.isArray(params.snapshotSourceRoots)
-        ? params.snapshotSourceRoots
-        : Array.isArray(pluginConfig.snapshotSourceRoots)
-            ? pluginConfig.snapshotSourceRoots
-            : undefined;
-    if (configured) {
-        return configured
-            .map((entry, index) => {
-            const record = objectRecord(entry);
-            const root = optionalString(record.root);
-            const label = safeScopeSegment(optionalString(record.label) || `source-${index + 1}`);
-            return root ? { label, root: expandUserPath(root) } : undefined;
-        })
-            .filter((entry) => Boolean(entry));
-    }
     return [
         {
             label: "media",

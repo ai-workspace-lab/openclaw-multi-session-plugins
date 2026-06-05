@@ -20,7 +20,6 @@ export type XWorkmateArtifactExport = {
     scopeKind: XWorkmateArtifactScopeKind;
     artifacts: XWorkmateArtifact[];
     warnings: string[];
-    manifestMarkdown: string;
 };
 export type XWorkmateArtifactPrepare = {
     runId: string;
@@ -59,4 +58,11 @@ export declare function prepareXWorkmateArtifacts(input: ExportInput): Promise<X
 export declare function collectAndSnapshotXWorkmateArtifacts(input: ExportInput): Promise<XWorkmateArtifactSnapshot>;
 export declare function exportXWorkmateArtifacts(input: ExportInput): Promise<XWorkmateArtifactExport>;
 export declare function readXWorkmateArtifact(input: ReadInput): Promise<XWorkmateArtifactExport>;
+export declare function formatArtifactManifestMarkdown(input: {
+    remoteWorkingDirectory: string;
+    artifactScope?: string;
+    scopeKind?: XWorkmateArtifactScopeKind;
+    artifacts: XWorkmateArtifact[];
+    warnings: string[];
+}): string;
 export {};
