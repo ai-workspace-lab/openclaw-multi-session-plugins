@@ -85,15 +85,20 @@ jobs:
           fi
 
       - name: Configure SSH key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SINGLE_NODE_VPS_SSH_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          if [ -z "${{ secrets.SINGLE_NODE_VPS_SSH_PRIVATE_KEY }}" ]; then
+          if [ -z "${SSH_PRIVATE_KEY}" ]; then
             echo "::error::Secret SINGLE_NODE_VPS_SSH_PRIVATE_KEY is not set."
             exit 1
           fi
           install -m 700 -d ~/.ssh
-          printf '%s' "${{ secrets.SINGLE_NODE_VPS_SSH_PRIVATE_KEY }}" > ~/.ssh/openclaw_ed25519
+          printf '%s\n' "${SSH_PRIVATE_KEY}" \
+            | perl -pe 's/\\n/\n/g; s/\r$//' \
+            > ~/.ssh/openclaw_ed25519
           chmod 600 ~/.ssh/openclaw_ed25519
+          ssh-keygen -y -f ~/.ssh/openclaw_ed25519 >/dev/null
           ssh-keyscan -H openclaw.svc.plus >> ~/.ssh/known_hosts 2>/dev/null || true
 
       - name: Verify SSH connectivity
