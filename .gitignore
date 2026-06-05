@@ -2,3 +2,4 @@ node_modules/
 coverage/
 *.tsbuildinfo
 repomix-output.xml
+openclaw-multi-session-plugins-*.tgz
