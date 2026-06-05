@@ -11,7 +11,14 @@ import {
   readXWorkmateArtifact,
   formatArtifactManifestMarkdown,
 } from "./src/exportArtifacts.js";
-import { runXWorkmateBridgeAgents } from "./src/bridgeAgents.js";
+import {
+  createOrUpdateXWorkmateTaskRecord,
+  createXWorkmateTaskStore,
+  getXWorkmateTaskSnapshot,
+  recordXWorkmateSessionMapping,
+  registerXWorkmateDetachedTaskRuntime,
+  registerXWorkmateSessionExtension,
+} from "./src/taskState.js";
 
 type XWorkmateToolContext = {
   config?: unknown;
@@ -85,21 +92,55 @@ const plugin = {
 export default plugin;
 
 function register(api: OpenClawPluginApi) {
-  api.registerHook("session.start", async (event: any) => {
-    try {
-      const params = scopedGatewayParams(event?.context ?? event);
-      if (params.sessionKey && params.runId) {
-        await prepareXWorkmateArtifacts({
-          params,
-          config: api.config,
-          pluginConfig: api.pluginConfig,
-        });
+  const taskStore = createXWorkmateTaskStore();
+  registerXWorkmateSessionExtension(api);
+  registerXWorkmateDetachedTaskRuntime(api, taskStore);
+
+  api.registerHook(
+    "session.start",
+    async (event: any) => {
+      try {
+        const params = scopedGatewayParams(event?.context ?? event);
+        if (params.sessionKey && params.runId) {
+          createOrUpdateXWorkmateTaskRecord(taskStore, {
+            params,
+            status: "running",
+            progressSummary: "OpenClaw task is running",
+          });
+          const prepared = await prepareXWorkmateArtifacts({
+            params,
+            config: api.config,
+            pluginConfig: api.pluginConfig,
+          });
+          await recordXWorkmateSessionMapping({
+            api,
+            taskStore,
+            params,
+            artifactScope: prepared.artifactScope,
+          });
+        }
+      } catch (error) {
+        api.logger?.warn?.(`xworkmate session.start preparation failed: ${String(error)}`);
       }
-    } catch (e) {
-      // Ignored: best-effort preparation
+    },
+    { name: "openclaw-multi-session-plugins.session-start" },
+  );
+
+  api.registerGatewayMethod("xworkmate.tasks.get", async (opts: GatewayRequestHandlerOptions) => {
+    try {
+      const payload = await getXWorkmateTaskSnapshot({
+        api,
+        taskStore,
+        params: scopedGatewayParams(opts.params),
+      });
+      opts.respond(true, payload, undefined);
+    } catch (error) {
+      opts.respond(false, undefined, {
+        code: "INVALID_REQUEST",
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
   });
-
   api.registerGatewayMethod("xworkmate.artifacts.prepare", async (opts: GatewayRequestHandlerOptions) => {
     try {
       const payload = await prepareXWorkmateArtifacts({
@@ -175,27 +216,8 @@ function register(api: OpenClawPluginApi) {
       });
     }
   });
-  api.registerGatewayMethod("xworkmate.agents.run", async (opts: GatewayRequestHandlerOptions) => {
-    try {
-      const payload = await runXWorkmateBridgeAgents({
-        params: scopedGatewayParams(opts.params),
-        config: api.config,
-        pluginConfig: api.pluginConfig,
-      });
-      opts.respond(true, payload, undefined);
-    } catch (error) {
-      opts.respond(false, undefined, {
-        code: "INVALID_REQUEST",
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-  });
   api.registerTool((ctx) => createXWorkmateArtifactsTool(api, ctx), {
     names: ["openclaw_multi_session_artifacts"],
-    optional: true,
-  });
-  api.registerTool((ctx) => createXWorkmateAgentsTool(api, ctx), {
-    names: ["openclaw_multi_session_agents"],
     optional: true,
   });
 }
@@ -297,105 +319,6 @@ function createXWorkmateArtifactsTool(
         return { content: [{ type: "text", text }], details: {} };
       }
       throw new Error("action must be list or read");
-    },
-  } as unknown as AnyAgentTool;
-}
-
-function createXWorkmateAgentsTool(
-  api: OpenClawPluginApi,
-  ctx: XWorkmateToolContext,
-): AnyAgentTool {
-  return {
-    name: "openclaw_multi_session_agents",
-    label: "XWorkmate multi-agent bridge",
-    description:
-      "Ask XWorkmate Bridge to coordinate multiple configured agents, then save the result into the current task artifact scope.",
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        taskPrompt: {
-          type: "string",
-          description: "Overall multi-agent task prompt.",
-        },
-        mode: {
-          type: "string",
-          enum: ["sequence", "parallel", "race", "conversation"],
-          description: "Multi-agent orchestration mode.",
-        },
-        steps: {
-          type: "array",
-          description: "Agent steps. Each item needs providerId and prompt.",
-          items: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              providerId: { type: "string" },
-              prompt: { type: "string" },
-              outputAs: { type: "string" },
-              timeoutMs: { type: "number" },
-            },
-            required: ["providerId", "prompt"],
-          },
-        },
-        participants: {
-          type: "array",
-          description: "Conversation participants by providerId.",
-          items: { type: "string" },
-        },
-        maxTurns: {
-          type: "number",
-          description: "Maximum turns for conversation mode.",
-        },
-        stopConditions: {
-          type: "array",
-          description: "Text markers that stop conversation mode.",
-          items: { type: "string" },
-        },
-        timeoutMs: {
-          type: "number",
-          description: "Overall bridge request timeout.",
-        },
-      },
-      required: ["taskPrompt"],
-    },
-    async execute(_id: string, params: Record<string, unknown>) {
-      const runScope = resolveRunScope(ctx);
-      const sessionKey = ctx.sessionScope?.sessionKey || ctx.sessionKey;
-      const runId = ctx.sessionScope?.runId || ctx.runId || "";
-      if (!sessionKey) {
-        throw new Error("sessionKey required");
-      }
-      if (!runId) {
-        throw new Error("runId required");
-      }
-      const workspaceDir = ctx.sessionScope?.workspaceDir || ctx.workspaceDir;
-      const {
-        sessionKey: _ignoredSessionKey,
-        runId: _ignoredRunId,
-        workspaceDir: _ignoredWorkspaceDir,
-        ...operationParams
-      } = params;
-      const payload = await runXWorkmateBridgeAgents({
-        params: {
-          ...operationParams,
-          sessionKey,
-          runId,
-          ...(workspaceDir ? { workspaceDir } : {}),
-          ...(runScope?.artifactScope ? { artifactScope: runScope.artifactScope } : {}),
-        },
-        config: ctx.config ?? api.config,
-        pluginConfig: api.pluginConfig,
-      });
-      const summary = typeof payload.bridgeResult.summary === "string"
-        ? payload.bridgeResult.summary
-        : typeof payload.bridgeResult.output === "string"
-          ? payload.bridgeResult.output
-          : "Multi-agent run completed.";
-      return {
-        content: [{ type: "text", text: [summary, "", formatArtifactManifestMarkdown(payload)].join("\n") }],
-        details: { artifacts: payload.artifacts, bridgeResult: payload.bridgeResult },
-      };
     },
   } as unknown as AnyAgentTool;
 }

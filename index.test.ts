@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
@@ -22,12 +21,12 @@ describe("plugin registration", () => {
     };
 
     expect(manifest.contracts?.tools).toContain("openclaw_multi_session_artifacts");
-    expect(manifest.contracts?.tools).toContain("openclaw_multi_session_agents");
+    expect(manifest.contracts?.tools).not.toContain("openclaw_multi_session_agents");
     expect(manifest.contracts?.sessionScopedTools).toContain("openclaw_multi_session_artifacts");
-    expect(manifest.contracts?.sessionScopedTools).toContain("openclaw_multi_session_agents");
+    expect(manifest.contracts?.sessionScopedTools).not.toContain("openclaw_multi_session_agents");
     expect(manifest.configSchema?.properties?.artifactRefSigningSecret).toBeTruthy();
-    expect(manifest.configSchema?.properties?.bridgeUrl).toBeTruthy();
-    expect(manifest.configSchema?.properties?.bridgeToken).toBeTruthy();
+    expect(manifest.configSchema?.properties?.bridgeUrl).toBeUndefined();
+    expect(manifest.configSchema?.properties?.bridgeToken).toBeUndefined();
   });
 
   it("registers the xworkmate gateway methods and optional tools", () => {
@@ -43,27 +42,22 @@ describe("plugin registration", () => {
         tools.push({ tool, options });
       },
       registerHook: () => undefined,
-
     } as unknown as OpenClawPluginApi;
 
     plugin.register(api);
 
     expect(methods.map((entry) => entry.method)).toEqual([
+      "xworkmate.tasks.get",
       "xworkmate.artifacts.prepare",
       "xworkmate.artifacts.export",
       "xworkmate.artifacts.collect-and-snapshot",
       "xworkmate.artifacts.list",
       "xworkmate.artifacts.read",
-      "xworkmate.agents.run",
     ]);
     expect(methods.every((entry) => typeof entry.handler === "function")).toBe(true);
-    expect(tools).toHaveLength(2);
+    expect(tools).toHaveLength(1);
     expect(tools[0]?.options).toMatchObject({
       names: ["openclaw_multi_session_artifacts"],
-      optional: true,
-    });
-    expect(tools[1]?.options).toMatchObject({
-      names: ["openclaw_multi_session_agents"],
       optional: true,
     });
   });
@@ -131,6 +125,124 @@ describe("plugin registration", () => {
     expect(unprepared.payload?.warnings).toEqual(["artifact scope is not prepared for this task run"]);
   });
 
+  it("registers xworkmate task state against the native session extension and task runtime seams", async () => {
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-task-state-"));
+    const methods = new Map<string, GatewayMethodHandler>();
+    const hooks = new Map<string, (event: unknown) => Promise<void>>();
+    const sessionExtensions: Array<Record<string, unknown>> = [];
+    const sessionExtensionPatches: Array<Record<string, unknown>> = [];
+    const detachedRuntimes: Array<Record<string, unknown>> = [];
+    const api = {
+      config: {},
+      pluginConfig: { workspaceDir: root },
+      runtime: {
+        tasks: {
+          runs: {
+            bindSession: ({ sessionKey }: { sessionKey: string }) => ({
+              resolve: (token: string) =>
+                sessionKey === "agent:main:draft:1780636411666238-3" && token === "turn-1"
+                  ? {
+                      taskId: "native-task",
+                      runtime: "acp",
+                      requesterSessionKey: sessionKey,
+                      ownerKey: "draft-1780636411666238-3",
+                      scopeKind: "session",
+                      runId: token,
+                      task: "native",
+                      status: "running",
+                      deliveryStatus: "pending",
+                      notifyPolicy: "state_changes",
+                      createdAt: 1,
+                    }
+                  : undefined,
+            }),
+          },
+        },
+      },
+      session: {
+        state: {
+          registerSessionExtension: (extension: Record<string, unknown>) => {
+            sessionExtensions.push(extension);
+          },
+          patchSessionExtension: (patch: Record<string, unknown>) => {
+            sessionExtensionPatches.push(patch);
+            return { ok: true };
+          },
+        },
+      },
+      registerDetachedTaskRuntime: (runtime: Record<string, unknown>) => {
+        detachedRuntimes.push(runtime);
+      },
+      registerGatewayMethod: (method: string, handler: GatewayMethodHandler) => {
+        methods.set(method, handler);
+      },
+      registerTool: () => undefined,
+      registerHook: (event: string, handler: (payload: unknown) => Promise<void>) => {
+        hooks.set(event, handler);
+      },
+    } as unknown as OpenClawPluginApi;
+
+    plugin.register(api);
+
+    expect(sessionExtensions).toHaveLength(1);
+    expect(sessionExtensions[0]).toMatchObject({
+      namespace: "xworkmate",
+      sessionEntrySlotKey: "xworkmate",
+    });
+    const projected = (sessionExtensions[0]?.project as (ctx: Record<string, unknown>) => unknown)({
+      sessionKey: "agent:main:draft:1780636411666238-3",
+      state: {},
+    });
+    expect(projected).toMatchObject({
+      appSessionKey: "draft:1780636411666238-3",
+      openClawSessionKey: "agent:main:draft:1780636411666238-3",
+    });
+    expect(detachedRuntimes).toHaveLength(1);
+
+    await hooks.get("session.start")?.({
+      sessionKey: "draft-1780636411666238-3",
+      openClawSessionKey: "agent:main:draft:1780636411666238-3",
+      threadId: "draft-1780636411666238-3",
+      runId: "turn-1",
+      expectedArtifactDirs: ["artifacts/", "reports/", "exports/"],
+    });
+    await fs.promises.mkdir(path.join(root, "reports"), { recursive: true });
+    await fs.promises.writeFile(path.join(root, "reports", "final.md"), "final");
+    expect(sessionExtensionPatches).toHaveLength(1);
+    expect(sessionExtensionPatches[0]).toMatchObject({
+      key: "agent:main:draft:1780636411666238-3",
+      pluginId: "openclaw-multi-session-plugins",
+      namespace: "xworkmate",
+      value: {
+        appSessionKey: "draft-1780636411666238-3",
+        openClawSessionKey: "agent:main:draft:1780636411666238-3",
+        appThreadId: "draft-1780636411666238-3",
+        runId: "turn-1",
+        artifactScope: "tasks/draft-1780636411666238-3/turn-1",
+        expectedArtifactDirs: ["artifacts/", "reports/", "exports/"],
+      },
+    });
+
+    const snapshot = await callGatewayMethod(methods, "xworkmate.tasks.get", {
+      sessionKey: "draft-1780636411666238-3",
+      runId: "turn-1",
+      expectedArtifactDirs: ["reports"],
+      sinceUnixMs: Date.now() - 1_000,
+    });
+
+    expect(snapshot.ok).toBe(true);
+    expect(snapshot.payload).toMatchObject({
+      status: "completed",
+      taskStatus: "succeeded",
+      sessionKey: "draft-1780636411666238-3",
+      openClawSessionKey: "agent:main:draft:1780636411666238-3",
+      appSessionKey: "draft-1780636411666238-3",
+      artifactCount: 1,
+    });
+    expect(snapshot.payload?.task).toMatchObject({ taskId: "native-task", status: "running" });
+    expect(snapshot.payload?.artifacts).toMatchObject([{ relativePath: "reports/final.md" }]);
+  });
+
   it("does not invent default session or run ids for the optional agent tool", async () => {
     const tools: Array<{ tool: unknown; options: unknown }> = [];
     const api = {
@@ -141,8 +253,6 @@ describe("plugin registration", () => {
       registerTool: (tool: unknown, options: unknown) => {
         tools.push({ tool, options });
       },
-      registerHook: () => undefined,
-
     } as unknown as OpenClawPluginApi;
 
     plugin.register(api);
@@ -162,7 +272,7 @@ describe("plugin registration", () => {
     );
   });
 
-  it("does not expose session scope controls on the bridge agents tool", async () => {
+  it("does not expose the removed bridge agents tool", async () => {
     const tools: Array<{ tool: unknown; options: { names?: string[] } }> = [];
     const api = {
       config: {},
@@ -176,147 +286,7 @@ describe("plugin registration", () => {
 
     plugin.register(api);
 
-    const entry = tools.find((item) => item.options.names?.includes("openclaw_multi_session_agents"));
-    const factory = entry?.tool as (ctx: Record<string, unknown>) => {
-      parameters: { properties?: Record<string, unknown> };
-      execute: (id: string, params: Record<string, unknown>) => Promise<unknown>;
-    };
-    const tool = factory({});
-
-    expect(tool.parameters.properties?.sessionKey).toBeUndefined();
-    expect(tool.parameters.properties?.runId).toBeUndefined();
-    expect(tool.parameters.properties?.workspaceDir).toBeUndefined();
-    await expect(tool.execute("call-1", { taskPrompt: "run", steps: [] })).rejects.toThrow("sessionKey required");
-    await expect(factory({ sessionKey: "thread-main" }).execute("call-2", { taskPrompt: "run", steps: [] })).rejects.toThrow(
-      "runId required",
-    );
-  });
-
-  it("fails closed when bridge token is missing", async () => {
-    const tools: Array<{ tool: unknown; options: { names?: string[] } }> = [];
-    const api = {
-      config: {},
-      pluginConfig: { workspaceDir: await fs.promises.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-agent-token-")), bridgeUrl: "http://127.0.0.1:1" },
-      registerGatewayMethod: () => undefined,
-      registerHook: () => undefined,
-      registerTool: (tool: unknown, options: { names?: string[] }) => {
-        tools.push({ tool, options });
-      },
-    } as unknown as OpenClawPluginApi;
-
-    plugin.register(api);
-
-    const entry = tools.find((item) => item.options.names?.includes("openclaw_multi_session_agents"));
-    const factory = entry?.tool as (ctx: Record<string, unknown>) => {
-      execute: (id: string, params: Record<string, unknown>) => Promise<unknown>;
-    };
-    const tool = factory({ sessionKey: "thread-main", runId: "turn-1" });
-
-    await expect(
-      tool.execute("call-1", {
-        taskPrompt: "run",
-        steps: [{ providerId: "codex", prompt: "hello" }],
-      }),
-    ).rejects.toThrow("bridgeToken required");
-  });
-
-  it("runs bridge-backed multi-agent work inside the current task artifact scope", async () => {
-    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-bridge-agents-"));
-    const bridgeRequests: Array<Record<string, unknown>> = [];
-    const bridgeServer = http.createServer((req, res) => {
-      if (req.method !== "POST" || req.url !== "/acp/rpc") {
-        res.statusCode = 404;
-        res.end();
-        return;
-      }
-      expect(req.headers.authorization).toBe("Bearer bridge-token");
-      let body = "";
-      req.on("data", (chunk: Buffer) => {
-        body += chunk.toString("utf8");
-      });
-      req.on("end", () => {
-        const decoded = JSON.parse(body) as Record<string, unknown>;
-        bridgeRequests.push(decoded);
-        res.setHeader("Content-Type", "application/json");
-        res.end(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: decoded.id,
-            result: {
-              success: true,
-              status: "completed",
-              mode: "multi-agent",
-              orchestrationMode: "sequence",
-              summary: "bridge agents done",
-              steps: [{ providerId: "codex", status: "completed", output: "done" }],
-            },
-          }),
-        );
-      });
-    });
-    await new Promise<void>((resolve) => bridgeServer.listen(0, "127.0.0.1", resolve));
-    try {
-      const address = bridgeServer.address();
-      if (!address || typeof address === "string") {
-        throw new Error("missing bridge server address");
-      }
-      const tools: Array<{ tool: unknown; options: { names?: string[] } }> = [];
-      const api = {
-        config: {},
-        pluginConfig: {
-          workspaceDir: root,
-          bridgeUrl: `http://127.0.0.1:${address.port}`,
-          bridgeToken: "bridge-token",
-        },
-        registerGatewayMethod: () => undefined,
-      registerHook: () => undefined,
-        registerTool: (tool: unknown, options: { names?: string[] }) => {
-          tools.push({ tool, options });
-        },
-      } as unknown as OpenClawPluginApi;
-
-      plugin.register(api);
-
-      const entry = tools.find((item) => item.options.names?.includes("openclaw_multi_session_agents"));
-      const factory = entry?.tool as (ctx: Record<string, unknown>) => {
-        execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }>; details: { artifacts: Array<{ relativePath: string }> } }>;
-      };
-      const tool = factory({ sessionKey: "thread-main", runId: "turn-1", workspaceDir: root });
-      const result = await tool.execute("call-1", {
-        taskPrompt: "coordinate",
-        mode: "sequence",
-        steps: [{ providerId: "codex", prompt: "hello" }],
-        sessionKey: "evil",
-        runId: "evil",
-        workspaceDir: "/",
-      });
-
-      expect(result.content[0]?.text).toContain("bridge agents done");
-      expect(result.details.artifacts).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ relativePath: "multi-agent-result.json" }),
-          expect.objectContaining({ relativePath: "multi-agent-result.md" }),
-        ]),
-      );
-      expect(await fs.promises.readFile(path.join(root, "tasks", "thread-main", "turn-1", "multi-agent-result.md"), "utf8")).toContain(
-        "bridge agents done",
-      );
-      await expect(fs.promises.stat(path.join(root, "tasks", "evil", "evil", "multi-agent-result.md"))).rejects.toThrow();
-      expect(bridgeRequests).toHaveLength(1);
-      const params = bridgeRequests[0]?.params as Record<string, unknown>;
-      expect(params.sessionId).toBe("openclaw:thread-main");
-      expect(params.threadId).toBe("thread-main");
-      expect(params.workingDirectory).toBe(await fs.promises.realpath(path.join(root, "tasks", "thread-main", "turn-1")));
-      expect(params.multiAgent).toBe(true);
-      expect(params.routing).toMatchObject({
-        orchestrationMode: "sequence",
-        steps: [{ providerId: "codex", prompt: "hello" }],
-      });
-    } finally {
-      await new Promise<void>((resolve, reject) => {
-        bridgeServer.close((error) => (error ? reject(error) : resolve()));
-      });
-    }
+    expect(tools.map((item) => item.options.names).flat()).toEqual(["openclaw_multi_session_artifacts"]);
   });
 
   it("uses host context scope for the optional agent tool", async () => {
@@ -342,8 +312,6 @@ describe("plugin registration", () => {
       registerTool: (tool: unknown, options: unknown) => {
         tools.push({ tool, options });
       },
-      registerHook: () => undefined,
-
     } as unknown as OpenClawPluginApi;
 
     plugin.register(api);

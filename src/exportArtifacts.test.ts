@@ -325,6 +325,62 @@ describe("exportXWorkmateArtifacts", () => {
     await expect(fs.stat(path.join(root, "tasks", "draft-article", "openclaw-run-1", "article.docx"))).rejects.toThrow();
   });
 
+  it("exports explicitly expected artifact dirs when the task scope is empty", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "draft-article", runId: "openclaw-run-1" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.mkdir(path.join(root, "assets", "images"), { recursive: true });
+    await fs.mkdir(path.join(root, "reports"), { recursive: true });
+    await fs.writeFile(path.join(root, "assets", "images", "cover.png"), "png");
+    await fs.writeFile(path.join(root, "reports", "final.md"), "final");
+    await fs.writeFile(path.join(root, "scratch.txt"), "scratch");
+
+    const result = await exportXWorkmateArtifacts({
+      params: {
+        sessionKey: "draft-article",
+        runId: "openclaw-run-1",
+        artifactScope: prepared.artifactScope,
+        expectedArtifactDirs: ["assets/images", "reports"],
+        sinceUnixMs: Date.now() - 1_000,
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+
+    expect(result.artifacts.map((entry) => entry.relativePath).sort()).toEqual([
+      "assets/images/cover.png",
+      "reports/final.md",
+    ]);
+    expect(result.artifacts.every((entry) => entry.artifactScope === prepared.artifactScope)).toBe(true);
+    expect(result.artifacts.every((entry) => entry.scopeKind === "task")).toBe(true);
+  });
+
+  it("keeps scoped artifacts authoritative over expected artifact dirs", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "draft-article", runId: "openclaw-run-1" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.mkdir(path.join(prepared.artifactDirectory, "reports"), { recursive: true });
+    await fs.writeFile(path.join(prepared.artifactDirectory, "reports", "scoped.md"), "scoped");
+    await fs.mkdir(path.join(root, "reports"), { recursive: true });
+    await fs.writeFile(path.join(root, "reports", "root.md"), "root");
+
+    const result = await exportXWorkmateArtifacts({
+      params: {
+        sessionKey: "draft-article",
+        runId: "openclaw-run-1",
+        artifactScope: prepared.artifactScope,
+        expectedArtifactDirs: ["reports"],
+        sinceUnixMs: Date.now() - 1_000,
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+
+    expect(result.artifacts.map((entry) => entry.relativePath)).toEqual(["reports/scoped.md"]);
+  });
+
   it("does not adopt old workspace root files into a later task scope", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
     await prepareXWorkmateArtifacts({

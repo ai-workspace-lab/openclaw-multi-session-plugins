@@ -4,16 +4,17 @@ OpenClaw plugin for logical multi-session isolation and scoped XWorkmate artifac
 
 ## Why
 
-XWorkmate talks to OpenClaw through `xworkmate-bridge` using the existing
-`/gateway/openclaw` task contract. The bridge sends `chat.send`, waits for
-`agent.wait`, then asks this plugin for a session/run-scoped artifact manifest.
+XWorkmate talks to OpenClaw through `xworkmate-bridge` using the app-facing
+`/acp` and `/acp/rpc` contract with OpenClaw routing metadata. The bridge sends
+`chat.send`, waits for `agent.wait`, then asks this plugin for a session/run-scoped artifact manifest.
 The APP can then sync generated files into its local thread workspace without
 changing the UI or adding provider-specific routes.
 
-This plugin is not a scheduler. OpenClaw core owns sub-agents, multi-agent
-routing, queues, cron, and cross-session execution. This package only adapts
-those existing OpenClaw multi-task/session identities into isolated artifact
-directories and signed artifact reads.
+This plugin is not a scheduler or bridge client. OpenClaw core owns sub-agents,
+multi-agent routing, queues, cron, task registry state, and cross-session
+execution. This package only adapts those existing OpenClaw task/session
+identities into isolated artifact directories, session key mapping, and signed
+artifact reads.
 
 It registers four Gateway methods:
 
@@ -141,12 +142,15 @@ Export response payload:
 Files at or below `maxInlineBytes` also include `encoding: "base64"` and `content`.
 When `artifactScope` is omitted, export/list defaults to the current task scope
 derived from `sessionKey/runId`. `sinceUnixMs` is only a filter inside that task
-scope. The plugin does not adopt files from the workspace root; agents must
-write final deliverables directly into the prepared `artifactDirectory`.
+scope. The prepared task scope remains authoritative: when it contains files,
+the plugin exports only that scope.
 
-The plugin never scans workspace root, `owners/*/threads/*`, or any previous
-thread workspace as a fallback and does not borrow artifacts from earlier task
-scopes.
+If the prepared task scope is empty, trusted Gateway callers may pass
+`expectedArtifactDirs` such as `["assets/images", "reports"]`. The plugin then
+scans only those explicit workspace-root subdirectories and labels the exported
+files with the current task `artifactScope`. It never performs a broad workspace
+root scan, never scans `owners/*/threads/*`, and does not borrow artifacts from
+earlier task scopes.
 
 Each exported artifact includes `artifactRef`, a plugin-signed reference over
 the issued session/run scope, artifact scope, path, size, and SHA-256 digest. `read` accepts
@@ -186,17 +190,12 @@ Gateway clients can use:
   pipeline, not in `chat.send` params. If `chat.send` returns a different
   OpenClaw `runId`, prepare/export with that actual `runId` instead of the
   bridge request id.
-- `openclaw_multi_session_agents` from an OpenClaw task to call XWorkmate Bridge
-  `/acp/rpc` with `multiAgent=true`, while deriving `sessionKey`, `runId`, and
-  `workspaceDir` from the host task context instead of model-controlled tool
-  parameters.
-- `xworkmate.agents.run` for trusted gateway callers that need the same
-  bridge-backed multi-agent run and artifact-scope export in one method.
 - `xworkmate.artifacts.list` for a metadata-only manifest and Markdown table.
 - `xworkmate.artifacts.read` with `artifactScope` and `relativePath` for one task file.
 - `xworkmate.artifacts.read` with `artifactRef` for a plugin-returned task file.
 - `xworkmate.artifacts.collect-and-snapshot` after `agent.wait` to copy `~/.openclaw/media/` and `/tmp/openclaw/` outputs into the current task scope.
-- `xworkmate.artifacts.export` with `artifactScope` after collect-and-snapshot for the XWorkmate APP sync path.
+- `xworkmate.artifacts.export` with `artifactScope` after collect-and-snapshot for the XWorkmate APP sync path. Pass `expectedArtifactDirs` when the task contract declares root-level delivery directories.
+- `xworkmate.tasks.get` to read the OpenClaw native task state for a run and return the current artifact export in the same payload.
 
 Large files are metadata-only in the export payload, but XWorkmate Bridge can
 generate its own signed download URL and call `xworkmate.artifacts.read` as the
@@ -207,7 +206,7 @@ only remote file access path.
 - Only files inside the resolved OpenClaw workspace are exported.
 - `.git`, `.openclaw`, `.xworkmate`, `.pi`, transient framework state, and dependency folders are excluded from task artifact exports.
 - `dist/`, `build/`, and other delivery directories inside the prepared task scope are exported recursively.
-- Export never adopts files from the workspace root or OpenClaw owner/thread workspaces; agents must write into the prepared task scope.
+- Export scans workspace-root files only from explicit `expectedArtifactDirs`, only when the prepared task scope is empty, and never from OpenClaw owner/thread workspaces.
 - Symlinks are skipped to avoid workspace escape.
 - Files larger than `maxInlineBytes` are listed with metadata and a warning, but are not inlined.
 - `artifactScope` must be `tasks/<safe-session-key>/<safe-run-id>`.

@@ -6,8 +6,8 @@
     "onStartup": true
   },
   "contracts": {
-    "tools": ["openclaw_multi_session_artifacts", "openclaw_multi_session_agents"],
-    "sessionScopedTools": ["openclaw_multi_session_artifacts", "openclaw_multi_session_agents"]
+    "tools": ["openclaw_multi_session_artifacts"],
+    "sessionScopedTools": ["openclaw_multi_session_artifacts"]
   },
   "configSchema": {
     "type": "object",
@@ -28,18 +28,6 @@
       "artifactRefSigningSecret": {
         "type": "string",
         "description": "Optional stable secret used to sign artifactRef values. Defaults to an in-process secret."
-      },
-      "bridgeUrl": {
-        "type": "string",
-        "description": "XWorkmate Bridge base URL or /acp/rpc URL used by openclaw_multi_session_agents."
-      },
-      "bridgeToken": {
-        "type": "string",
-        "description": "Bearer token used when openclaw_multi_session_agents calls XWorkmate Bridge."
-      },
-      "bridgeTimeoutMs": {
-        "type": "number",
-        "description": "Default timeout for XWorkmate Bridge multi-agent calls."
       }
     }
   },
@@ -60,19 +48,6 @@
       "label": "Artifact Ref Signing Secret",
       "help": "Optional stable secret for plugin artifact references. Leave blank for process-local refs.",
       "sensitive": true
-    },
-    "bridgeUrl": {
-      "label": "Bridge URL",
-      "help": "XWorkmate Bridge base URL or /acp/rpc URL for multi-agent orchestration."
-    },
-    "bridgeToken": {
-      "label": "Bridge Token",
-      "help": "Bearer token for XWorkmate Bridge multi-agent orchestration.",
-      "sensitive": true
-    },
-    "bridgeTimeoutMs": {
-      "label": "Bridge Timeout",
-      "help": "Timeout in milliseconds for multi-agent bridge calls."
     }
   }
 }
