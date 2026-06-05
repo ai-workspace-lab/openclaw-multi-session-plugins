@@ -46,8 +46,10 @@ jobs:
             value="${{ inputs.version }}"
           else
             ref="${GITHUB_REF_NAME:-}"
-            value="${ref#v}"
+            value="${ref}"
           fi
+          value="${value##*/}"
+          value="${value#v}"
           if ! [[ "${value}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::Resolved value '${value}' is not a valid X.Y.Z version"
             exit 1
