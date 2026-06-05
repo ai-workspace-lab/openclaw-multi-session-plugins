@@ -44,6 +44,8 @@ export type XWorkmateArtifactExport = {
   scopeKind: XWorkmateArtifactScopeKind;
   artifacts: XWorkmateArtifact[];
   warnings: string[];
+  expectedArtifactDirs: string[];
+  expectedArtifactDirStatus: XWorkmateExpectedArtifactDirStatus[];
 };
 
 export type XWorkmateArtifactPrepare = {
@@ -56,6 +58,13 @@ export type XWorkmateArtifactPrepare = {
   artifactDirectory: string;
   relativeArtifactDirectory: string;
   warnings: string[];
+  expectedArtifactDirs: string[];
+  expectedArtifactDirStatus: XWorkmateExpectedArtifactDirStatus[];
+};
+
+export type XWorkmateExpectedArtifactDirStatus = {
+  relativePath: string;
+  exists: boolean;
 };
 
 export type XWorkmateArtifactSnapshot = {
@@ -108,7 +117,8 @@ export async function prepareXWorkmateArtifacts(input: ExportInput): Promise<XWo
   const params = input.params ?? {};
   const pluginConfig = input.pluginConfig ?? {};
   const runId = requiredString(params.runId, "runId required");
-  const sessionKey = requiredString(params.sessionKey, "sessionKey required");
+  const sessionKey = requiredString(params.openclawSessionKey ?? params.sessionKey, "openclawSessionKey required");
+  const expectedArtifactDirs = normalizeExpectedArtifactDirs(params.expectedArtifactDirs);
   const expectedArtifactScope = artifactScopeFor(sessionKey, runId);
   const requestedArtifactScope = optionalArtifactScope(params.artifactScope);
   if (requestedArtifactScope && requestedArtifactScope !== expectedArtifactScope) {
@@ -124,6 +134,7 @@ export async function prepareXWorkmateArtifacts(input: ExportInput): Promise<XWo
   const artifactScope = expectedArtifactScope;
   const scopeRoot = resolveScopeRoot(workspaceRoot, artifactScope);
   await fs.mkdir(scopeRoot, { recursive: true });
+  const expectedArtifactDirStatus = await expectedArtifactDirStatuses(workspaceRoot, expectedArtifactDirs);
   return {
     runId,
     sessionKey,
@@ -134,6 +145,8 @@ export async function prepareXWorkmateArtifacts(input: ExportInput): Promise<XWo
     artifactDirectory: scopeRoot,
     relativeArtifactDirectory: artifactScope,
     warnings: [],
+    expectedArtifactDirs,
+    expectedArtifactDirStatus,
   };
 }
 
@@ -141,7 +154,7 @@ export async function collectAndSnapshotXWorkmateArtifacts(input: ExportInput): 
   const params = input.params ?? {};
   const pluginConfig = input.pluginConfig ?? {};
   const runId = requiredString(params.runId, "runId required");
-  const sessionKey = requiredString(params.sessionKey, "sessionKey required");
+  const sessionKey = requiredString(params.openclawSessionKey ?? params.sessionKey, "openclawSessionKey required");
   const sinceUnixMs = nonNegativeNumber(params.sinceUnixMs, 0);
   const maxFiles = positiveInteger(params.maxFiles, pluginConfig.snapshotMaxFiles, DEFAULT_MAX_FILES);
   const expectedArtifactScope = artifactScopeFor(sessionKey, runId);
@@ -211,7 +224,7 @@ export async function exportXWorkmateArtifacts(input: ExportInput): Promise<XWor
   const params = input.params ?? {};
   const pluginConfig = input.pluginConfig ?? {};
   const runId = requiredString(params.runId, "runId required");
-  const sessionKey = requiredString(params.sessionKey, "sessionKey required");
+  const sessionKey = requiredString(params.openclawSessionKey ?? params.sessionKey, "openclawSessionKey required");
 
   const maxFiles = positiveInteger(params.maxFiles, pluginConfig.maxFiles, DEFAULT_MAX_FILES);
   const maxInlineBytes = nonNegativeInteger(
@@ -229,6 +242,7 @@ export async function exportXWorkmateArtifacts(input: ExportInput): Promise<XWor
   });
   const workspaceRoot = await fs.realpath(workspaceDir);
   const warnings: string[] = [];
+  const expectedDirs = normalizeExpectedArtifactDirs(params.expectedArtifactDirs);
   const expectedArtifactScope = artifactScopeFor(sessionKey, runId);
   const requestedArtifactScope = optionalArtifactScope(params.artifactScope);
   if (requestedArtifactScope && requestedArtifactScope !== expectedArtifactScope) {
@@ -260,9 +274,6 @@ export async function exportXWorkmateArtifacts(input: ExportInput): Promise<XWor
       })
     : [];
   const candidates = scopedCandidates;
-  const expectedDirs = Array.isArray(params.expectedArtifactDirs)
-    ? params.expectedArtifactDirs.map((d: any) => String(d).trim()).filter(Boolean)
-    : [];
   if (candidates.length === 0 && expectedDirs.length > 0) {
     for (const dir of expectedDirs) {
       const dirPath = path.join(workspaceRoot, safeInputRelativePath(dir, "expectedArtifactDir"));
@@ -347,6 +358,8 @@ export async function exportXWorkmateArtifacts(input: ExportInput): Promise<XWor
     scopeKind,
     artifacts,
     warnings,
+    expectedArtifactDirs: expectedDirs,
+    expectedArtifactDirStatus: await expectedArtifactDirStatuses(workspaceRoot, expectedDirs),
   };
   return result;
 }
@@ -355,7 +368,7 @@ export async function readXWorkmateArtifact(input: ReadInput): Promise<XWorkmate
   const params = input.params ?? {};
   const pluginConfig = input.pluginConfig ?? {};
   const runId = requiredString(params.runId, "runId required");
-  const sessionKey = requiredString(params.sessionKey, "sessionKey required");
+  const sessionKey = requiredString(params.openclawSessionKey ?? params.sessionKey, "openclawSessionKey required");
   const expectedArtifactScope = artifactScopeFor(sessionKey, runId);
   const expectedSessionScope = taskSessionScopeFor(sessionKey);
   const requestedArtifactRef = optionalString(params.artifactRef);
@@ -456,8 +469,43 @@ export async function readXWorkmateArtifact(input: ReadInput): Promise<XWorkmate
     scopeKind,
     artifacts: [artifact],
     warnings,
+    expectedArtifactDirs: [],
+    expectedArtifactDirStatus: [],
   };
   return result;
+}
+
+export function normalizeExpectedArtifactDirs(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const entry of value) {
+    const normalized = safeInputRelativePath(entry, "expectedArtifactDir");
+    const withSlash = normalized.endsWith("/") ? normalized : `${normalized}/`;
+    if (seen.has(withSlash)) {
+      continue;
+    }
+    seen.add(withSlash);
+    result.push(withSlash);
+  }
+  return result;
+}
+
+async function expectedArtifactDirStatuses(
+  workspaceRoot: string,
+  expectedArtifactDirs: string[],
+): Promise<XWorkmateExpectedArtifactDirStatus[]> {
+  const statuses: XWorkmateExpectedArtifactDirStatus[] = [];
+  for (const relativePath of expectedArtifactDirs) {
+    const dirPath = path.join(workspaceRoot, safeInputRelativePath(relativePath, "expectedArtifactDir"));
+    statuses.push({
+      relativePath,
+      exists: await directoryExists(dirPath),
+    });
+  }
+  return statuses;
 }
 
 export function formatArtifactManifestMarkdown(input: {

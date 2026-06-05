@@ -33,7 +33,7 @@ describe("plugin registration", () => {
     const methods: Array<{ method: string; handler: GatewayMethodHandler }> = [];
     const tools: Array<{ tool: unknown; options: unknown }> = [];
     const api = {
-      config: {},
+      config: {}, logger: { warn: console.warn },
       pluginConfig: {},
       registerGatewayMethod: (method: string, handler: GatewayMethodHandler) => {
         methods.push({ method, handler });
@@ -47,8 +47,8 @@ describe("plugin registration", () => {
     plugin.register(api);
 
     expect(methods.map((entry) => entry.method)).toEqual([
+      "xworkmate.session.prepare",
       "xworkmate.tasks.get",
-      "xworkmate.artifacts.prepare",
       "xworkmate.artifacts.export",
       "xworkmate.artifacts.collect-and-snapshot",
       "xworkmate.artifacts.list",
@@ -66,22 +66,33 @@ describe("plugin registration", () => {
     const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-gateway-"));
     const methods = new Map<string, GatewayMethodHandler>();
     const api = {
-      config: {},
+      config: {}, logger: { warn: console.warn },
       pluginConfig: { workspaceDir: root },
       registerGatewayMethod: (method: string, handler: GatewayMethodHandler) => {
         methods.set(method, handler);
       },
       registerTool: () => undefined,
       registerHook: () => undefined,
+      runtime: {
+        agent: {
+          session: {
+            patchSessionEntry: async (params: any) => {
+              params.update({ pluginExtensions: {} });
+              return {};
+            },
+          },
+        },
+      },
     } as unknown as OpenClawPluginApi;
 
     plugin.register(api);
 
-    const prepared = await callGatewayMethod(methods, "xworkmate.artifacts.prepare", {
-      sessionKey: "thread-main",
+    const prepared = await callGatewayMethod(methods, "xworkmate.session.prepare", {
+      appThreadKey: "thread-main",
+      openclawSessionKey: "thread-main",
       runId: "turn-1",
     });
-    expect(prepared.ok).toBe(true);
+    console.log(prepared); expect(prepared.ok).toBe(true);
     expect(prepared.payload?.artifactScope).toBe("tasks/thread-main/turn-1");
     const artifactDirectory = String(prepared.payload?.artifactDirectory);
 
@@ -133,14 +144,26 @@ describe("plugin registration", () => {
     const sessionExtensionPatches: Array<Record<string, unknown>> = [];
     const detachedRuntimes: Array<Record<string, unknown>> = [];
     const api = {
-      config: {},
+      config: {}, logger: { warn: console.warn },
       pluginConfig: { workspaceDir: root },
       runtime: {
+        agent: {
+          session: {
+            registerSessionExtension: (extension: Record<string, unknown>) => {
+              sessionExtensions.push(extension);
+            },
+            patchSessionEntry: async (patch: any) => {
+              sessionExtensionPatches.push(patch);
+              if (patch.update) patch.update({ pluginExtensions: {} });
+              return {};
+            },
+          },
+        },
         tasks: {
           runs: {
             bindSession: ({ sessionKey }: { sessionKey: string }) => ({
               resolve: (token: string) =>
-                sessionKey === "agent:main:draft:1780636411666238-3" && token === "turn-1"
+                sessionKey === "draft:1780636411666238-3" && token === "turn-1"
                   ? {
                       taskId: "native-task",
                       runtime: "acp",
@@ -164,12 +187,9 @@ describe("plugin registration", () => {
           registerSessionExtension: (extension: Record<string, unknown>) => {
             sessionExtensions.push(extension);
           },
-          patchSessionExtension: (patch: Record<string, unknown>) => {
-            sessionExtensionPatches.push(patch);
-            return { ok: true };
-          },
         },
       },
+
       registerDetachedTaskRuntime: (runtime: Record<string, unknown>) => {
         detachedRuntimes.push(runtime);
       },
@@ -180,28 +200,27 @@ describe("plugin registration", () => {
       registerHook: (event: string, handler: (payload: unknown) => Promise<void>) => {
         hooks.set(event, handler);
       },
+
     } as unknown as OpenClawPluginApi;
 
     plugin.register(api);
 
     expect(sessionExtensions).toHaveLength(1);
     expect(sessionExtensions[0]).toMatchObject({
-      namespace: "xworkmate",
+      namespace: "xworkmate.sessionMapping",
       sessionEntrySlotKey: "xworkmate",
     });
     const projected = (sessionExtensions[0]?.project as (ctx: Record<string, unknown>) => unknown)({
-      sessionKey: "agent:main:draft:1780636411666238-3",
+      sessionKey: "draft:1780636411666238-3",
       state: {},
     });
-    expect(projected).toMatchObject({
-      appSessionKey: "draft:1780636411666238-3",
-      openClawSessionKey: "agent:main:draft:1780636411666238-3",
-    });
-    expect(detachedRuntimes).toHaveLength(1);
+    expect(projected).toMatchObject({});
+    expect(detachedRuntimes).toHaveLength(0);
 
-    await hooks.get("session.start")?.({
+    await hooks.get("session_start")?.({
+      appThreadKey: "draft:1780636411666238-3",
       sessionKey: "draft-1780636411666238-3",
-      openClawSessionKey: "agent:main:draft:1780636411666238-3",
+      openclawSessionKey: "draft:1780636411666238-3",
       threadId: "draft-1780636411666238-3",
       runId: "turn-1",
       expectedArtifactDirs: ["artifacts/", "reports/", "exports/"],
@@ -210,21 +229,13 @@ describe("plugin registration", () => {
     await fs.promises.writeFile(path.join(root, "reports", "final.md"), "final");
     expect(sessionExtensionPatches).toHaveLength(1);
     expect(sessionExtensionPatches[0]).toMatchObject({
-      key: "agent:main:draft:1780636411666238-3",
-      pluginId: "openclaw-multi-session-plugins",
-      namespace: "xworkmate",
-      value: {
-        appSessionKey: "draft-1780636411666238-3",
-        openClawSessionKey: "agent:main:draft:1780636411666238-3",
-        appThreadId: "draft-1780636411666238-3",
-        runId: "turn-1",
-        artifactScope: "tasks/draft-1780636411666238-3/turn-1",
-        expectedArtifactDirs: ["artifacts/", "reports/", "exports/"],
-      },
+      sessionKey: "draft:1780636411666238-3",
+      preserveActivity: true,
     });
 
     const snapshot = await callGatewayMethod(methods, "xworkmate.tasks.get", {
-      sessionKey: "draft-1780636411666238-3",
+      appThreadKey: "draft:1780636411666238-3",
+      openclawSessionKey: "draft:1780636411666238-3",
       runId: "turn-1",
       expectedArtifactDirs: ["reports"],
       sinceUnixMs: Date.now() - 1_000,
@@ -232,11 +243,10 @@ describe("plugin registration", () => {
 
     expect(snapshot.ok).toBe(true);
     expect(snapshot.payload).toMatchObject({
-      status: "completed",
-      taskStatus: "succeeded",
-      sessionKey: "draft-1780636411666238-3",
-      openClawSessionKey: "agent:main:draft:1780636411666238-3",
-      appSessionKey: "draft-1780636411666238-3",
+      status: "running",
+      taskStatus: "running",
+      appThreadKey: "draft:1780636411666238-3",
+      openclawSessionKey: "draft:1780636411666238-3",
       artifactCount: 1,
     });
     expect(snapshot.payload?.task).toMatchObject({ taskId: "native-task", status: "running" });
@@ -246,7 +256,7 @@ describe("plugin registration", () => {
   it("does not invent default session or run ids for the optional agent tool", async () => {
     const tools: Array<{ tool: unknown; options: unknown }> = [];
     const api = {
-      config: {},
+      config: {}, logger: { warn: console.warn },
       pluginConfig: { workspaceDir: path.join(os.tmpdir(), "openclaw-multi-session-tool-test") },
       registerGatewayMethod: () => undefined,
       registerHook: () => undefined,
@@ -275,7 +285,7 @@ describe("plugin registration", () => {
   it("does not expose the removed bridge agents tool", async () => {
     const tools: Array<{ tool: unknown; options: { names?: string[] } }> = [];
     const api = {
-      config: {},
+      config: {}, logger: { warn: console.warn },
       pluginConfig: {},
       registerGatewayMethod: () => undefined,
       registerHook: () => undefined,
@@ -305,7 +315,7 @@ describe("plugin registration", () => {
 
     const tools: Array<{ tool: unknown; options: unknown }> = [];
     const api = {
-      config: {},
+      config: {}, logger: { warn: console.warn },
       pluginConfig: {},
       registerGatewayMethod: () => undefined,
       registerHook: () => undefined,

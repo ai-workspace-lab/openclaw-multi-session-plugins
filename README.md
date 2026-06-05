@@ -16,18 +16,21 @@ execution. This package only adapts those existing OpenClaw task/session
 identities into isolated artifact directories, session key mapping, and signed
 artifact reads.
 
-It registers four Gateway methods:
+It registers the minimal Gateway methods needed by XWorkmate:
 
 ```text
-xworkmate.artifacts.prepare
+xworkmate.session.prepare
+xworkmate.tasks.get
+xworkmate.artifacts.collect-and-snapshot
 xworkmate.artifacts.export
-xworkmate.artifacts.list
 xworkmate.artifacts.read
 ```
 
-`prepare` creates a per-task artifact scope under `tasks/` in the resolved OpenClaw workspace. `export`
-and `read` then return safe, relative artifact entries that XWorkmate Bridge can normalize
-into the APP `artifacts[]` contract.
+`xworkmate.session.prepare` writes the durable
+`SessionEntry.pluginExtensions["openclaw-multi-session-plugins"]["xworkmate.sessionMapping"]`
+mapping and creates a per-task artifact scope under `tasks/` in the resolved
+OpenClaw workspace. `export` and `read` then return safe, relative artifact
+entries that XWorkmate Bridge can normalize into the APP `artifacts[]` contract.
 
 ## Install
 
@@ -185,7 +188,10 @@ local users can open or download them directly from that workspace path.
 
 Gateway clients can use:
 
-- `xworkmate.artifacts.prepare` before `chat.send` to allocate a task artifact directory.
+- `xworkmate.session.prepare` before `chat.send` with typed
+  `schemaVersion`, `appThreadKey`, `openclawSessionKey`, `runId`, and
+  `expectedArtifactDirs` to allocate a task artifact directory and persist the
+  app/OpenClaw session mapping.
 - Keep the prepared `artifactScope`/`artifactDirectory` in the gateway artifact
   pipeline, not in `chat.send` params. If `chat.send` returns a different
   OpenClaw `runId`, prepare/export with that actual `runId` instead of the

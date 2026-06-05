@@ -79,6 +79,50 @@ describe("exportXWorkmateArtifacts", () => {
     expect(result.artifacts[0]?.artifactRef).toContain(".");
   });
 
+  it("preserves expected artifact directories even when they do not exist", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
+
+    const prepared = await prepareXWorkmateArtifacts({
+      params: {
+        sessionKey: "thread-main",
+        runId: "run-expected",
+        expectedArtifactDirs: ["artifacts/", "assets/images"],
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+    const result = await exportXWorkmateArtifacts({
+      params: {
+        sessionKey: "thread-main",
+        runId: "run-expected",
+        artifactScope: prepared.artifactScope,
+        expectedArtifactDirs: ["artifacts/", "assets/images"],
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+
+    expect(prepared.expectedArtifactDirs).toEqual(["artifacts/", "assets/images/"]);
+    expect(result.expectedArtifactDirs).toEqual(["artifacts/", "assets/images/"]);
+    expect(result.expectedArtifactDirStatus).toEqual([
+      { relativePath: "artifacts/", exists: false },
+      { relativePath: "assets/images/", exists: false },
+    ]);
+  });
+
+  it("rejects unsafe expected artifact directories", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
+
+    await expect(
+      prepareXWorkmateArtifacts({
+        params: {
+          sessionKey: "thread-main",
+          runId: "run-unsafe",
+          expectedArtifactDirs: ["../outside"],
+        },
+        pluginConfig: { workspaceDir: root },
+      }),
+    ).rejects.toThrow("expectedArtifactDir must stay inside the workspace");
+  });
+
 
 
   it("snapshots OpenClaw media and tmp outputs into the current task artifact scope", async () => {

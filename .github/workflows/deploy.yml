@@ -1,0 +1,187 @@
+name: Deploy
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Plugin version to install (e.g. 2026.6.1). Leave blank to use the release tag."
+        required: false
+        default: ""
+      force:
+        description: "Reinstall even if the same version is already installed."
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+concurrency:
+  group: openclaw-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  install-on-host:
+    name: Update plugin on ubuntu@openclaw.svc.plus
+    runs-on: ubuntu-latest
+    env:
+      SSH_HOST: ubuntu@openclaw.svc.plus
+      PLUGIN_NAME: openclaw-multi-session-plugins
+    steps:
+      - name: Resolve target version
+        id: version
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.version }}" ]; then
+            value="${{ inputs.version }}"
+          else
+            ref="${GITHUB_REF_NAME:-}"
+            value="${ref#v}"
+          fi
+          if ! [[ "${value}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Resolved value '${value}' is not a valid X.Y.Z version"
+            exit 1
+          fi
+          if [ -z "${value}" ]; then
+            echo "::error::Could not resolve plugin version from inputs or GITHUB_REF_NAME"
+            exit 1
+          fi
+          echo "value=${value}" >> "$GITHUB_OUTPUT"
+          echo "Resolved plugin version: ${value}"
+
+      - name: Verify version is published to npm
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          PACKAGE="${PLUGIN_NAME}@${VERSION}"
+          if ! npm view "${PACKAGE}" version >/dev/null 2>&1; then
+            echo "::error::${PACKAGE} is not published to npm yet. Run the Publish workflow first."
+            exit 1
+          fi
+          PUBLISHED="$(npm view "${PACKAGE}" version)"
+          echo "::notice::${PLUGIN_NAME}@${PUBLISHED} is available on npm"
+
+      - name: Configure SSH key
+        run: |
+          set -euo pipefail
+          if [ -z "${{ secrets.OPENCLAW_SSH_KEY }}" ]; then
+            echo "::error::Secret OPENCLAW_SSH_KEY is not set."
+            exit 1
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s' "${{ secrets.OPENCLAW_SSH_KEY }}" > ~/.ssh/openclaw_ed25519
+          chmod 600 ~/.ssh/openclaw_ed25519
+          ssh-keyscan -H openclaw.svc.plus >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Verify SSH connectivity
+        run: |
+          ssh -i ~/.ssh/openclaw_ed25519 -o BatchMode=yes -o ConnectTimeout=10 \
+            "${SSH_HOST}" 'echo "connected to $(hostname) as $(whoami)"'
+
+      - name: Install or update plugin on remote host
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+          FORCE: ${{ inputs.force || 'false' }}
+        run: |
+          ssh -i ~/.ssh/openclaw_ed25519 -o BatchMode=yes -o ServerAliveInterval=30 \
+            "${SSH_HOST}" bash -s -- "${VERSION}" "${FORCE}" <<'REMOTE'
+          set -euo pipefail
+          VERSION="$1"
+          FORCE="$2"
+          PACKAGE="${PLUGIN_NAME}@${VERSION}"
+          STATE_DIR="/tmp/openclaw-deploy"
+          mkdir -p "${STATE_DIR}"
+
+          echo "==> Installing ${PACKAGE} on $(hostname) (force=${FORCE})"
+
+          # Record the previously installed version for rollback.
+          PREVIOUS_VERSION=""
+          if command -v openclaw >/dev/null 2>&1; then
+            PREVIOUS_VERSION="$(npm ls -g "${PLUGIN_NAME}" --depth=0 2>/dev/null \
+              | awk -F'[@:]' '/'"${PLUGIN_NAME}"'@/ {print $2; exit}' || true)"
+          fi
+          echo "==> Previously installed version: ${PREVIOUS_VERSION:-<none>}"
+
+          # Skip when the requested version is already present unless forced.
+          if [ "${FORCE}" != "true" ] && [ "${PREVIOUS_VERSION}" = "${VERSION}" ]; then
+            echo "==> ${PACKAGE} already installed and force=false; nothing to do"
+            exit 0
+          fi
+
+          printf '%s\n' "${PREVIOUS_VERSION}" > "${STATE_DIR}/previous-version"
+
+          rollback() {
+            local rc=$?
+            echo "::remote-error::Install failed (exit ${rc}); attempting rollback"
+            local prev
+            prev="$(cat "${STATE_DIR}/previous-version" 2>/dev/null || true)"
+            if [ -n "${prev}" ] && [ "${prev}" != "${VERSION}" ]; then
+              echo "::remote-warning::Reinstalling ${PLUGIN_NAME}@${prev}"
+              npm install -g "${PLUGIN_NAME}@${prev}" || true
+              if command -v openclaw >/dev/null 2>&1; then
+                openclaw plugins enable "${PLUGIN_NAME}" || true
+              fi
+            else
+              echo "::remote-warning::No previous version recorded; leaving host as-is"
+            fi
+            exit "${rc}"
+          }
+          trap rollback ERR
+
+          install_plugin() {
+            if command -v openclaw >/dev/null 2>&1; then
+              openclaw plugins install "${PACKAGE}" \
+                || openclaw plugins update "${PACKAGE}" \
+                || npm install -g "${PACKAGE}"
+            else
+              npm install -g "${PACKAGE}"
+            fi
+          }
+
+          install_plugin
+
+          if command -v openclaw >/dev/null 2>&1; then
+            openclaw plugins enable "${PLUGIN_NAME}" || true
+          fi
+
+          # Verify the installed version matches the requested version.
+          INSTALLED="$(npm ls -g "${PLUGIN_NAME}" --depth=0 2>/dev/null \
+            | awk -F'[@:]' '/'"${PLUGIN_NAME}"'@/ {print $2; exit}' || true)"
+          if [ "${INSTALLED}" != "${VERSION}" ]; then
+            echo "::remote-error::Verification failed: expected ${VERSION}, found ${INSTALLED:-<none>}"
+            exit 1
+          fi
+
+          trap - ERR
+          rm -f "${STATE_DIR}/previous-version"
+
+          echo "==> Installed plugin state:"
+          if command -v openclaw >/dev/null 2>&1; then
+            openclaw plugins info "${PLUGIN_NAME}" || true
+          fi
+          npm ls -g "${PLUGIN_NAME}" || true
+          echo "==> ${PACKAGE} is now active on $(hostname)"
+          REMOTE
+
+      - name: Summarize deploy
+        if: always()
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "::notice::openclaw-multi-session-plugins@${VERSION} deployed to ubuntu@openclaw.svc.plus"
+          else
+            echo "::error::Deploy to ubuntu@openclaw.svc.plus failed for openclaw-multi-session-plugins@${VERSION}"
+            exit 1
+          fi
