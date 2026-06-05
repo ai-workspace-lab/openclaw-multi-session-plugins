@@ -182,12 +182,11 @@ jobs:
               git -C "${SOURCE_DIR}" remote add origin "${INSTALL_SPEC}"
               git -C "${SOURCE_DIR}" fetch --depth 1 origin "${INSTALL_REF}"
               git -C "${SOURCE_DIR}" checkout --detach FETCH_HEAD
-              if command -v corepack >/dev/null 2>&1; then
-                corepack enable
-                corepack prepare pnpm@10.28.2 --activate
-              fi
-              pnpm --dir "${SOURCE_DIR}" install --frozen-lockfile
-              pnpm --dir "${SOURCE_DIR}" build
+              TOOL_DIR="${STATE_DIR}/tools"
+              npm install --prefix "${TOOL_DIR}" pnpm@10.28.2
+              PNPM="${TOOL_DIR}/node_modules/.bin/pnpm"
+              "${PNPM}" --dir "${SOURCE_DIR}" install --frozen-lockfile
+              "${PNPM}" --dir "${SOURCE_DIR}" build
               npm install -g "${SOURCE_DIR}"
             elif [ "${INSTALL_SOURCE}" = "github" ]; then
               global_root="$(npm root -g)"
