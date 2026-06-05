@@ -37,6 +37,21 @@ const plugin = {
 };
 export default plugin;
 function register(api) {
+    api.registerHook("session.start", async (event) => {
+        try {
+            const params = scopedGatewayParams(event?.context ?? event);
+            if (params.sessionKey && params.runId) {
+                await prepareXWorkmateArtifacts({
+                    params,
+                    config: api.config,
+                    pluginConfig: api.pluginConfig,
+                });
+            }
+        }
+        catch (e) {
+            // Ignored: best-effort preparation
+        }
+    });
     api.registerGatewayMethod("xworkmate.artifacts.prepare", async (opts) => {
         try {
             const payload = await prepareXWorkmateArtifacts({

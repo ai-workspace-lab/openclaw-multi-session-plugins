@@ -84,6 +84,21 @@ const plugin = {
 export default plugin;
 
 function register(api: OpenClawPluginApi) {
+  api.registerHook("session.start", async (event: any) => {
+    try {
+      const params = scopedGatewayParams(event?.context ?? event);
+      if (params.sessionKey && params.runId) {
+        await prepareXWorkmateArtifacts({
+          params,
+          config: api.config,
+          pluginConfig: api.pluginConfig,
+        });
+      }
+    } catch (e) {
+      // Ignored: best-effort preparation
+    }
+  });
+
   api.registerGatewayMethod("xworkmate.artifacts.prepare", async (opts: GatewayRequestHandlerOptions) => {
     try {
       const payload = await prepareXWorkmateArtifacts({

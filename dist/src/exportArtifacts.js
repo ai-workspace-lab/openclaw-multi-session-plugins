@@ -146,17 +146,46 @@ export async function exportXWorkmateArtifacts(input) {
     if (!scopePrepared && sinceUnixMs > 0) {
         await fs.mkdir(scopeRoot, { recursive: true });
     }
+    let effectiveSince = sinceUnixMs;
+    if (scopePrepared && sinceUnixMs > 0) {
+        try {
+            const scopeStat = await fs.stat(scopeRoot);
+            effectiveSince = Math.min(sinceUnixMs, scopeStat.birthtimeMs || scopeStat.mtimeMs);
+        }
+        catch { }
+    }
     const scopedCandidates = (await directoryExists(scopeRoot))
         ? await collectCandidates({
             scanRoot: scopeRoot,
             relativeRoot: scopeRoot,
-            sinceUnixMs,
+            sinceUnixMs: effectiveSince,
             warnSkippedSymlinks: true,
             warnings,
             ignoreRules: await loadArtifactIgnoreRules(scopeRoot, warnings),
         })
         : [];
     const candidates = scopedCandidates;
+    const expectedDirs = Array.isArray(params.expectedArtifactDirs)
+        ? params.expectedArtifactDirs.map((d) => String(d).trim()).filter(Boolean)
+        : [];
+    if (candidates.length === 0 && expectedDirs.length > 0) {
+        for (const dir of expectedDirs) {
+            const dirPath = path.join(workspaceRoot, safeInputRelativePath(dir, "expectedArtifactDir"));
+            if (await directoryExists(dirPath)) {
+                const dirCandidates = await collectCandidates({
+                    scanRoot: dirPath,
+                    relativeRoot: workspaceRoot,
+                    sinceUnixMs: effectiveSince,
+                    warnSkippedSymlinks: true,
+                    warnings,
+                    ignoreRules: await loadArtifactIgnoreRules(dirPath, warnings),
+                });
+                for (const c of dirCandidates) {
+                    candidates.push(c);
+                }
+            }
+        }
+    }
     if (!scopePrepared && candidates.length === 0) {
         warnings.push("artifact scope is not prepared for this task run");
     }
