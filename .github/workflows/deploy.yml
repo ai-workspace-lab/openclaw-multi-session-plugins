@@ -68,17 +68,20 @@ jobs:
         run: |
           set -euo pipefail
           PACKAGE="${PLUGIN_NAME}@${VERSION}"
-          if npm view "${PACKAGE}" version >/dev/null 2>&1; then
+          ref="${GITHUB_REF_NAME:-release/v${VERSION}}"
+          github_spec="git+${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git#${ref}"
+          if npm pack "${github_spec}" --dry-run >/dev/null 2>&1; then
+            echo "::notice::Installing ${PACKAGE} from ${github_spec}"
+            echo "source=github" >> "$GITHUB_OUTPUT"
+            echo "install_spec=${github_spec}" >> "$GITHUB_OUTPUT"
+          elif npm view "${PACKAGE}" version >/dev/null 2>&1; then
             PUBLISHED="$(npm view "${PACKAGE}" version)"
-            echo "::notice::${PLUGIN_NAME}@${PUBLISHED} is available on npm"
+            echo "::warning::Could not package ${github_spec}; falling back to npm ${PLUGIN_NAME}@${PUBLISHED}"
             echo "source=npm" >> "$GITHUB_OUTPUT"
             echo "install_spec=${PACKAGE}" >> "$GITHUB_OUTPUT"
           else
-            ref="${GITHUB_REF_NAME:-release/v${VERSION}}"
-            install_spec="git+${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git#${ref}"
-            echo "::warning::${PACKAGE} is not published to npm yet; installing from ${install_spec}"
-            echo "source=github" >> "$GITHUB_OUTPUT"
-            echo "install_spec=${install_spec}" >> "$GITHUB_OUTPUT"
+            echo "::error::Could not package ${github_spec}, and ${PACKAGE} is not published to npm."
+            exit 1
           fi
 
       - name: Configure SSH key
