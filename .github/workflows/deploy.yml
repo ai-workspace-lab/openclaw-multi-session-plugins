@@ -163,7 +163,9 @@ jobs:
           trap rollback ERR
 
           install_plugin() {
-            if command -v openclaw >/dev/null 2>&1; then
+            if [ "${INSTALL_SOURCE}" = "github" ]; then
+              npm install -g "${INSTALL_SPEC}"
+            elif command -v openclaw >/dev/null 2>&1; then
               openclaw plugins install "${INSTALL_SPEC}" \
                 || openclaw plugins update "${INSTALL_SPEC}" \
                 || npm install -g "${INSTALL_SPEC}"
