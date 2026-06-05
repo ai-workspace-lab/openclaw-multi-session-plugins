@@ -61,18 +61,25 @@ jobs:
           echo "value=${value}" >> "$GITHUB_OUTPUT"
           echo "Resolved plugin version: ${value}"
 
-      - name: Verify version is published to npm
+      - name: Resolve install source
+        id: install
         env:
           VERSION: ${{ steps.version.outputs.value }}
         run: |
           set -euo pipefail
           PACKAGE="${PLUGIN_NAME}@${VERSION}"
-          if ! npm view "${PACKAGE}" version >/dev/null 2>&1; then
-            echo "::error::${PACKAGE} is not published to npm yet. Run the Publish workflow first."
-            exit 1
+          if npm view "${PACKAGE}" version >/dev/null 2>&1; then
+            PUBLISHED="$(npm view "${PACKAGE}" version)"
+            echo "::notice::${PLUGIN_NAME}@${PUBLISHED} is available on npm"
+            echo "source=npm" >> "$GITHUB_OUTPUT"
+            echo "install_spec=${PACKAGE}" >> "$GITHUB_OUTPUT"
+          else
+            ref="${GITHUB_REF_NAME:-release/v${VERSION}}"
+            install_spec="git+${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git#${ref}"
+            echo "::warning::${PACKAGE} is not published to npm yet; installing from ${install_spec}"
+            echo "source=github" >> "$GITHUB_OUTPUT"
+            echo "install_spec=${install_spec}" >> "$GITHUB_OUTPUT"
           fi
-          PUBLISHED="$(npm view "${PACKAGE}" version)"
-          echo "::notice::${PLUGIN_NAME}@${PUBLISHED} is available on npm"
 
       - name: Configure SSH key
         run: |
@@ -94,18 +101,24 @@ jobs:
       - name: Install or update plugin on remote host
         env:
           VERSION: ${{ steps.version.outputs.value }}
+          INSTALL_SPEC: ${{ steps.install.outputs.install_spec }}
+          INSTALL_SOURCE: ${{ steps.install.outputs.source }}
           FORCE: ${{ inputs.force || 'false' }}
         run: |
           ssh -i ~/.ssh/openclaw_ed25519 -o BatchMode=yes -o ServerAliveInterval=30 \
-            "${SSH_HOST}" bash -s -- "${VERSION}" "${FORCE}" <<'REMOTE'
+            "${SSH_HOST}" bash -s -- "${PLUGIN_NAME}" "${VERSION}" "${INSTALL_SPEC}" "${INSTALL_SOURCE}" "${FORCE}" <<'REMOTE'
           set -euo pipefail
-          VERSION="$1"
-          FORCE="$2"
+          PLUGIN_NAME="$1"
+          VERSION="$2"
+          INSTALL_SPEC="$3"
+          INSTALL_SOURCE="$4"
+          FORCE="$5"
           PACKAGE="${PLUGIN_NAME}@${VERSION}"
           STATE_DIR="/tmp/openclaw-deploy"
           mkdir -p "${STATE_DIR}"
 
-          echo "==> Installing ${PACKAGE} on $(hostname) (force=${FORCE})"
+          echo "==> Installing ${PACKAGE} from ${INSTALL_SOURCE} on $(hostname) (force=${FORCE})"
+          echo "==> Install spec: ${INSTALL_SPEC}"
 
           # Record the previously installed version for rollback.
           PREVIOUS_VERSION=""
@@ -143,11 +156,11 @@ jobs:
 
           install_plugin() {
             if command -v openclaw >/dev/null 2>&1; then
-              openclaw plugins install "${PACKAGE}" \
-                || openclaw plugins update "${PACKAGE}" \
-                || npm install -g "${PACKAGE}"
+              openclaw plugins install "${INSTALL_SPEC}" \
+                || openclaw plugins update "${INSTALL_SPEC}" \
+                || npm install -g "${INSTALL_SPEC}"
             else
-              npm install -g "${PACKAGE}"
+              npm install -g "${INSTALL_SPEC}"
             fi
           }
 
