@@ -69,20 +69,11 @@ jobs:
           set -euo pipefail
           PACKAGE="${PLUGIN_NAME}@${VERSION}"
           ref="${GITHUB_REF_NAME:-release/v${VERSION}}"
-          github_spec="git+${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git#${ref}"
-          if npm pack "${github_spec}" --dry-run >/dev/null 2>&1; then
-            echo "::notice::Installing ${PACKAGE} from ${github_spec}"
-            echo "source=github" >> "$GITHUB_OUTPUT"
-            echo "install_spec=${github_spec}" >> "$GITHUB_OUTPUT"
-          elif npm view "${PACKAGE}" version >/dev/null 2>&1; then
-            PUBLISHED="$(npm view "${PACKAGE}" version)"
-            echo "::warning::Could not package ${github_spec}; falling back to npm ${PLUGIN_NAME}@${PUBLISHED}"
-            echo "source=npm" >> "$GITHUB_OUTPUT"
-            echo "install_spec=${PACKAGE}" >> "$GITHUB_OUTPUT"
-          else
-            echo "::error::Could not package ${github_spec}, and ${PACKAGE} is not published to npm."
-            exit 1
-          fi
+          repo_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          echo "::notice::Installing ${PACKAGE} from source repo ${repo_url} ref ${ref}"
+          echo "source=source" >> "$GITHUB_OUTPUT"
+          echo "install_ref=${ref}" >> "$GITHUB_OUTPUT"
+          echo "install_spec=${repo_url}" >> "$GITHUB_OUTPUT"
 
       - name: Configure SSH key
         env:
@@ -111,22 +102,25 @@ jobs:
           VERSION: ${{ steps.version.outputs.value }}
           INSTALL_SPEC: ${{ steps.install.outputs.install_spec }}
           INSTALL_SOURCE: ${{ steps.install.outputs.source }}
+          INSTALL_REF: ${{ steps.install.outputs.install_ref }}
           FORCE: ${{ inputs.force || 'false' }}
         run: |
           ssh -i ~/.ssh/openclaw_ed25519 -o BatchMode=yes -o ServerAliveInterval=30 \
-            "${SSH_HOST}" bash -s -- "${PLUGIN_NAME}" "${VERSION}" "${INSTALL_SPEC}" "${INSTALL_SOURCE}" "${FORCE}" <<'REMOTE'
+            "${SSH_HOST}" bash -s -- "${PLUGIN_NAME}" "${VERSION}" "${INSTALL_SPEC}" "${INSTALL_SOURCE}" "${INSTALL_REF}" "${FORCE}" <<'REMOTE'
           set -euo pipefail
           PLUGIN_NAME="$1"
           VERSION="$2"
           INSTALL_SPEC="$3"
           INSTALL_SOURCE="$4"
-          FORCE="$5"
+          INSTALL_REF="$5"
+          FORCE="$6"
           PACKAGE="${PLUGIN_NAME}@${VERSION}"
           STATE_DIR="/tmp/openclaw-deploy"
           mkdir -p "${STATE_DIR}"
 
           echo "==> Installing ${PACKAGE} from ${INSTALL_SOURCE} on $(hostname) (force=${FORCE})"
           echo "==> Install spec: ${INSTALL_SPEC}"
+          echo "==> Install ref: ${INSTALL_REF}"
 
           get_installed_version() {
             node -e '
@@ -173,13 +167,31 @@ jobs:
           trap rollback ERR
 
           install_plugin() {
-            if [ "${INSTALL_SOURCE}" = "github" ]; then
+            global_root="$(npm root -g)"
+            global_target="${global_root}/${PLUGIN_NAME}"
+            if [ -e "${global_target}" ] && [ ! -d "${global_target}" ]; then
+              echo "::remote-warning::Removing invalid global package path ${global_target}"
+              rm -f "${global_target}"
+            fi
+
+            if [ "${INSTALL_SOURCE}" = "source" ]; then
+              SOURCE_DIR="${STATE_DIR}/source/${PLUGIN_NAME}"
+              rm -rf "${SOURCE_DIR}"
+              mkdir -p "${SOURCE_DIR}"
+              git -C "${SOURCE_DIR}" init
+              git -C "${SOURCE_DIR}" remote add origin "${INSTALL_SPEC}"
+              git -C "${SOURCE_DIR}" fetch --depth 1 origin "${INSTALL_REF}"
+              git -C "${SOURCE_DIR}" checkout --detach FETCH_HEAD
+              if command -v corepack >/dev/null 2>&1; then
+                corepack enable
+                corepack prepare pnpm@10.28.2 --activate
+              fi
+              pnpm --dir "${SOURCE_DIR}" install --frozen-lockfile
+              pnpm --dir "${SOURCE_DIR}" build
+              npm install -g "${SOURCE_DIR}"
+            elif [ "${INSTALL_SOURCE}" = "github" ]; then
               global_root="$(npm root -g)"
               global_target="${global_root}/${PLUGIN_NAME}"
-              if [ -e "${global_target}" ] && [ ! -d "${global_target}" ]; then
-                echo "::remote-warning::Removing invalid global package path ${global_target}"
-                rm -f "${global_target}"
-              fi
               npm install -g "${INSTALL_SPEC}"
             elif command -v openclaw >/dev/null 2>&1; then
               openclaw plugins install "${INSTALL_SPEC}" \
