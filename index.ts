@@ -5,6 +5,7 @@ import type {
 } from "openclaw/plugin-sdk/core";
 import { getPluginRuntimeGatewayRequestScope } from "openclaw/plugin-sdk/plugin-runtime";
 import {
+  collectAndSnapshotXWorkmateArtifacts,
   exportXWorkmateArtifacts,
   prepareXWorkmateArtifacts,
   readXWorkmateArtifact,
@@ -101,6 +102,21 @@ function register(api: OpenClawPluginApi) {
   api.registerGatewayMethod("xworkmate.artifacts.export", async (opts: GatewayRequestHandlerOptions) => {
     try {
       const payload = await exportXWorkmateArtifacts({
+        params: scopedGatewayParams(opts.params),
+        config: api.config,
+        pluginConfig: api.pluginConfig,
+      });
+      opts.respond(true, payload, undefined);
+    } catch (error) {
+      opts.respond(false, undefined, {
+        code: "INVALID_REQUEST",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+  api.registerGatewayMethod("xworkmate.artifacts.collect-and-snapshot", async (opts: GatewayRequestHandlerOptions) => {
+    try {
+      const payload = await collectAndSnapshotXWorkmateArtifacts({
         params: scopedGatewayParams(opts.params),
         config: api.config,
         pluginConfig: api.pluginConfig,

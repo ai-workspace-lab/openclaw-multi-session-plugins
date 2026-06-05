@@ -49,6 +49,7 @@ describe("plugin registration", () => {
     expect(methods.map((entry) => entry.method)).toEqual([
       "xworkmate.artifacts.prepare",
       "xworkmate.artifacts.export",
+      "xworkmate.artifacts.collect-and-snapshot",
       "xworkmate.artifacts.list",
       "xworkmate.artifacts.read",
       "xworkmate.agents.run",

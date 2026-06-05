@@ -195,7 +195,8 @@ Gateway clients can use:
 - `xworkmate.artifacts.list` for a metadata-only manifest and Markdown table.
 - `xworkmate.artifacts.read` with `artifactScope` and `relativePath` for one task file.
 - `xworkmate.artifacts.read` with `artifactRef` for a plugin-returned task file.
-- `xworkmate.artifacts.export` with `artifactScope` after `agent.wait` for the XWorkmate APP sync path.
+- `xworkmate.artifacts.collect-and-snapshot` after `agent.wait` to copy `~/.openclaw/media/` and `/tmp/openclaw/` outputs into the current task scope.
+- `xworkmate.artifacts.export` with `artifactScope` after collect-and-snapshot for the XWorkmate APP sync path.
 
 Large files are metadata-only in the export payload, but XWorkmate Bridge can
 generate its own signed download URL and call `xworkmate.artifacts.read` as the

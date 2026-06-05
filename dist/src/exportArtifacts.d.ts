@@ -33,6 +33,18 @@ export type XWorkmateArtifactPrepare = {
     relativeArtifactDirectory: string;
     warnings: string[];
 };
+export type XWorkmateArtifactSnapshot = {
+    runId: string;
+    sessionKey: string;
+    remoteWorkingDirectory: string;
+    remoteWorkspaceRefKind: "remotePath";
+    artifactScope: string;
+    scopeKind: "task";
+    artifactDirectory: string;
+    snapshotDirectory: string;
+    copiedFiles: string[];
+    warnings: string[];
+};
 type ExportInput = {
     params: Record<string, unknown>;
     config?: unknown;
@@ -44,13 +56,7 @@ type ReadInput = {
     pluginConfig?: Record<string, unknown>;
 };
 export declare function prepareXWorkmateArtifacts(input: ExportInput): Promise<XWorkmateArtifactPrepare>;
+export declare function collectAndSnapshotXWorkmateArtifacts(input: ExportInput): Promise<XWorkmateArtifactSnapshot>;
 export declare function exportXWorkmateArtifacts(input: ExportInput): Promise<XWorkmateArtifactExport>;
 export declare function readXWorkmateArtifact(input: ReadInput): Promise<XWorkmateArtifactExport>;
-export declare function formatArtifactManifestMarkdown(input: {
-    remoteWorkingDirectory: string;
-    artifactScope?: string;
-    scopeKind?: XWorkmateArtifactScopeKind;
-    artifacts: XWorkmateArtifact[];
-    warnings: string[];
-}): string;
 export {};

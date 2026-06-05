@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  collectAndSnapshotXWorkmateArtifacts,
   exportXWorkmateArtifacts,
   prepareXWorkmateArtifacts,
   readXWorkmateArtifact,
@@ -100,6 +101,62 @@ describe("exportXWorkmateArtifacts", () => {
     });
 
     expect(result.artifacts).toEqual([]);
+  });
+
+  it("snapshots OpenClaw media and tmp outputs into the current task artifact scope", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
+    const mediaRoot = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-media-"));
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-global-"));
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { sessionKey: "thread-main", runId: "run-1" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.mkdir(path.join(mediaRoot, "browser"), { recursive: true });
+    await fs.mkdir(path.join(tmpRoot, "renders"), { recursive: true });
+    const oldFile = path.join(mediaRoot, "browser", "old.png");
+    await fs.writeFile(oldFile, "old");
+    const snapshotSinceUnixMs = Date.now() + 20;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await fs.writeFile(path.join(mediaRoot, "browser", "current.png"), "png");
+    await fs.writeFile(path.join(tmpRoot, "renders", "final.mp4"), "mp4");
+
+    const snapshot = await collectAndSnapshotXWorkmateArtifacts({
+      params: {
+        sessionKey: "thread-main",
+        runId: "run-1",
+        artifactScope: prepared.artifactScope,
+        sinceUnixMs: snapshotSinceUnixMs,
+      },
+      pluginConfig: {
+        workspaceDir: root,
+        snapshotSourceRoots: [
+          { label: "media", root: mediaRoot },
+          { label: "tmp-openclaw", root: tmpRoot },
+        ],
+      },
+    });
+
+    expect(snapshot.artifactScope).toBe(prepared.artifactScope);
+    expect(snapshot.copiedFiles.sort()).toEqual([
+      "artifacts/media/browser/current.png",
+      "artifacts/tmp-openclaw/renders/final.mp4",
+    ]);
+    await expect(fs.stat(path.join(prepared.artifactDirectory, "artifacts", "media", "browser", "old.png"))).rejects.toThrow();
+
+    const result = await exportXWorkmateArtifacts({
+      params: {
+        sessionKey: "thread-main",
+        runId: "run-1",
+        artifactScope: prepared.artifactScope,
+        includeContent: false,
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+
+    expect(result.artifacts.map((artifact) => artifact.relativePath).sort()).toEqual([
+      "artifacts/media/browser/current.png",
+      "artifacts/tmp-openclaw/renders/final.mp4",
+    ]);
   });
 
   it("skips excluded directories and symlinks", async () => {

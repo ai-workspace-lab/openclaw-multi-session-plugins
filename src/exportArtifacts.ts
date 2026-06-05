@@ -59,6 +59,19 @@ export type XWorkmateArtifactPrepare = {
   warnings: string[];
 };
 
+export type XWorkmateArtifactSnapshot = {
+  runId: string;
+  sessionKey: string;
+  remoteWorkingDirectory: string;
+  remoteWorkspaceRefKind: "remotePath";
+  artifactScope: string;
+  scopeKind: "task";
+  artifactDirectory: string;
+  snapshotDirectory: string;
+  copiedFiles: string[];
+  warnings: string[];
+};
+
 type ExportInput = {
   params: Record<string, unknown>;
   config?: unknown;
@@ -122,6 +135,76 @@ export async function prepareXWorkmateArtifacts(input: ExportInput): Promise<XWo
     artifactDirectory: scopeRoot,
     relativeArtifactDirectory: artifactScope,
     warnings: [],
+  };
+}
+
+export async function collectAndSnapshotXWorkmateArtifacts(input: ExportInput): Promise<XWorkmateArtifactSnapshot> {
+  const params = input.params ?? {};
+  const pluginConfig = input.pluginConfig ?? {};
+  const runId = requiredString(params.runId, "runId required");
+  const sessionKey = requiredString(params.sessionKey, "sessionKey required");
+  const sinceUnixMs = nonNegativeNumber(params.sinceUnixMs, 0);
+  const maxFiles = positiveInteger(params.maxFiles, pluginConfig.snapshotMaxFiles, DEFAULT_MAX_FILES);
+  const expectedArtifactScope = artifactScopeFor(sessionKey, runId);
+  const requestedArtifactScope = optionalArtifactScope(params.artifactScope);
+  if (requestedArtifactScope && requestedArtifactScope !== expectedArtifactScope) {
+    throw new Error("artifactScope does not match sessionKey/runId");
+  }
+  const workspaceDir = resolveWorkspaceDir({
+    config: input.config,
+    pluginConfig,
+    params,
+    sessionKey,
+  });
+  const workspaceRoot = await fs.realpath(workspaceDir);
+  const artifactScope = requestedArtifactScope || expectedArtifactScope;
+  const scopeRoot = resolveScopeRoot(workspaceRoot, artifactScope);
+  const snapshotRoot = path.join(scopeRoot, "artifacts");
+  if (!isWithinRoot(scopeRoot, snapshotRoot)) {
+    throw new Error("snapshotDirectory must stay inside artifactScope");
+  }
+  await fs.mkdir(snapshotRoot, { recursive: true });
+
+  const warnings: string[] = [];
+  const copiedFiles: string[] = [];
+  for (const source of openClawSnapshotSources(params, pluginConfig)) {
+    if (copiedFiles.length >= maxFiles) {
+      warnings.push(`snapshot file limit reached; skipped remaining files after ${maxFiles}`);
+      break;
+    }
+    const candidates = await collectSnapshotSourceCandidates({
+      source,
+      sinceUnixMs,
+      warnings,
+    });
+    for (const candidate of candidates) {
+      if (copiedFiles.length >= maxFiles) {
+        warnings.push(`snapshot file limit reached; skipped remaining files after ${maxFiles}`);
+        break;
+      }
+      const destinationRelativePath = safeSnapshotDestinationRelativePath(source.label, candidate.relativePath);
+      const destination = path.join(snapshotRoot, destinationRelativePath.split("/").join(path.sep));
+      if (!isWithinRoot(snapshotRoot, destination)) {
+        warnings.push(`skipped unsafe snapshot path ${destinationRelativePath}`);
+        continue;
+      }
+      await fs.mkdir(path.dirname(destination), { recursive: true });
+      await fs.copyFile(candidate.absolutePath, destination);
+      copiedFiles.push(`artifacts/${destinationRelativePath}`);
+    }
+  }
+
+  return {
+    runId,
+    sessionKey,
+    remoteWorkingDirectory: workspaceRoot,
+    remoteWorkspaceRefKind: "remotePath",
+    artifactScope,
+    scopeKind: "task",
+    artifactDirectory: scopeRoot,
+    snapshotDirectory: snapshotRoot,
+    copiedFiles,
+    warnings,
   };
 }
 
@@ -448,6 +531,84 @@ async function collectCandidates(input: {
         continue;
       }
       if (isIgnoredArtifactPath(relativePath, input.ignoreRules)) {
+        continue;
+      }
+      candidates.push({
+        absolutePath: realPath,
+        relativePath,
+        sizeBytes: stat.size,
+        mtimeMs: changedAtMs,
+      });
+    }
+  }
+}
+
+type SnapshotSource = {
+  label: string;
+  root: string;
+};
+
+async function collectSnapshotSourceCandidates(input: {
+  source: SnapshotSource;
+  sinceUnixMs: number;
+  warnings: string[];
+}): Promise<Candidate[]> {
+  let sourceRoot = "";
+  try {
+    sourceRoot = await fs.realpath(input.source.root);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
+      input.warnings.push(`cannot read ${input.source.label}: ${String(error)}`);
+    }
+    return [];
+  }
+  const candidates: Candidate[] = [];
+  await walk(sourceRoot);
+  candidates.sort((left, right) => {
+    if (right.mtimeMs !== left.mtimeMs) {
+      return right.mtimeMs - left.mtimeMs;
+    }
+    return left.relativePath.localeCompare(right.relativePath);
+  });
+  return candidates;
+
+  async function walk(currentDir: string): Promise<void> {
+    let entries;
+    try {
+      entries = await fs.readdir(currentDir, { withFileTypes: true });
+    } catch (error) {
+      input.warnings.push(`cannot read ${input.source.label}/${safeDisplayPath(sourceRoot, currentDir)}: ${String(error)}`);
+      return;
+    }
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      if (entry.name === "." || entry.name === "..") {
+        continue;
+      }
+      const absolutePath = path.join(currentDir, entry.name);
+      if (entry.isSymbolicLink()) {
+        input.warnings.push(`skipped symlink ${input.source.label}/${safeDisplayPath(sourceRoot, absolutePath)}`);
+        continue;
+      }
+      if (entry.isDirectory()) {
+        await walk(absolutePath);
+        continue;
+      }
+      if (!entry.isFile()) {
+        continue;
+      }
+      const stat = await fs.stat(absolutePath);
+      const changedAtMs = Math.max(stat.mtimeMs, stat.ctimeMs);
+      if (changedAtMs < input.sinceUnixMs) {
+        continue;
+      }
+      const realPath = await fs.realpath(absolutePath);
+      if (!isWithinRoot(sourceRoot, realPath)) {
+        input.warnings.push(`skipped path outside ${input.source.label}: ${entry.name}`);
+        continue;
+      }
+      const relativePath = safeRelativePath(sourceRoot, realPath);
+      if (!relativePath) {
         continue;
       }
       candidates.push({
@@ -797,6 +958,38 @@ function contentTypeForPath(relativePath: string): string {
     default:
       return "application/octet-stream";
   }
+}
+
+function openClawSnapshotSources(params: Record<string, unknown>, pluginConfig: Record<string, unknown>): SnapshotSource[] {
+  const configured = Array.isArray(params.snapshotSourceRoots)
+    ? params.snapshotSourceRoots
+    : Array.isArray(pluginConfig.snapshotSourceRoots)
+      ? pluginConfig.snapshotSourceRoots
+      : undefined;
+  if (configured) {
+    return configured
+      .map((entry, index) => {
+        const record = objectRecord(entry);
+        const root = optionalString(record.root);
+        const label = safeScopeSegment(optionalString(record.label) || `source-${index + 1}`);
+        return root ? { label, root: expandUserPath(root) } : undefined;
+      })
+      .filter((entry): entry is SnapshotSource => Boolean(entry));
+  }
+  return [
+    {
+      label: "media",
+      root: expandUserPath(optionalString(pluginConfig.openClawMediaDir) || path.join("~", ".openclaw", "media")),
+    },
+    {
+      label: "tmp-openclaw",
+      root: expandUserPath(optionalString(pluginConfig.openClawTmpDir) || path.join(os.tmpdir(), "openclaw")),
+    },
+  ];
+}
+
+function safeSnapshotDestinationRelativePath(sourceLabel: string, sourceRelativePath: string): string {
+  return [safeScopeSegment(sourceLabel), safeInputRelativePath(sourceRelativePath, "snapshot source path")].join("/");
 }
 
 function objectRecord(value: unknown): Record<string, unknown> {
