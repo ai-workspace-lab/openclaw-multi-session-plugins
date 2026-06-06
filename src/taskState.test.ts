@@ -25,12 +25,17 @@ function createApiFixture(tasks: Record<string, unknown> = {}) {
             })),
           patchSessionEntry: async ({
             sessionKey,
+            fallbackEntry,
             update,
           }: {
             sessionKey: string;
+            fallbackEntry?: any;
             update: (entry: any) => Partial<any> | null;
           }) => {
-            const current = sessions.get(sessionKey) ?? { sessionId: sessionKey, updatedAt: 0 };
+            const current = sessions.get(sessionKey) ?? fallbackEntry;
+            if (!current) {
+              return null;
+            }
             const patch = update(current);
             if (patch) {
               sessions.set(sessionKey, { ...current, ...patch });

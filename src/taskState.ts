@@ -49,6 +49,7 @@ type SessionEntry = Record<string, unknown> & {
 
 type PatchSessionEntry = (params: {
   sessionKey: string;
+  fallbackEntry?: SessionEntry;
   preserveActivity?: boolean;
   update: (entry: SessionEntry) => Partial<SessionEntry> | null;
 }) => Promise<SessionEntry | null> | SessionEntry | null;
@@ -159,6 +160,10 @@ export async function upsertXWorkmateSessionMapping(
   let mapping: XWorkmateSessionMappingV1 | undefined;
   await patchSessionEntry({
     sessionKey: input.openclawSessionKey,
+    fallbackEntry: {
+      sessionId: input.openclawSessionKey,
+      updatedAt: Date.now(),
+    },
     preserveActivity: true,
     update: (entry) => {
       const existing = readMappingFromEntry(entry);

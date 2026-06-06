@@ -77,6 +77,10 @@ export async function upsertXWorkmateSessionMapping(api, input) {
     let mapping;
     await patchSessionEntry({
         sessionKey: input.openclawSessionKey,
+        fallbackEntry: {
+            sessionId: input.openclawSessionKey,
+            updatedAt: Date.now(),
+        },
         preserveActivity: true,
         update: (entry) => {
             const existing = readMappingFromEntry(entry);
