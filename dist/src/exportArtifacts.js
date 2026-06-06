@@ -161,6 +161,29 @@ export async function exportXWorkmateArtifacts(input) {
             warnings.push(`Unable to read artifact scope timestamp: ${String(error)}`);
         }
     }
+    // Copy global media to task scope to fix path breakage
+    if (scopePrepared || sinceUnixMs > 0) {
+        for (const source of openClawSnapshotSources(params, pluginConfig)) {
+            const globalCandidates = await collectSnapshotSourceCandidates({
+                source,
+                sinceUnixMs: effectiveSince,
+                warnings,
+            });
+            for (const gc of globalCandidates) {
+                const destRelPath = safeSnapshotDestinationRelativePath(source.label, gc.relativePath);
+                const dest = path.join(scopeRoot, "artifacts", destRelPath.split("/").join(path.sep));
+                if (isWithinRoot(scopeRoot, dest)) {
+                    try {
+                        await fs.mkdir(path.dirname(dest), { recursive: true });
+                        await fs.copyFile(gc.absolutePath, dest);
+                    }
+                    catch (error) {
+                        warnings.push(`Failed to copy media file ${gc.relativePath}: ${String(error)}`);
+                    }
+                }
+            }
+        }
+    }
     const scopedCandidates = (await directoryExists(scopeRoot))
         ? await collectCandidates({
             scanRoot: scopeRoot,
@@ -752,29 +775,7 @@ function resolveWorkspaceDir(input) {
     if (explicit) {
         return expandUserPath(explicit);
     }
-    const config = objectRecord(input.config);
-    const agents = objectRecord(config.agents);
-    const agentList = Array.isArray(agents.list)
-        ? agents.list.map(objectRecord).filter((entry) => Object.keys(entry).length > 0)
-        : [];
-    const agentId = agentIdFromSessionKey(input.sessionKey);
-    const selected = (agentId ? agentList.find((entry) => optionalString(entry.id) === agentId) : undefined) ??
-        agentList.find((entry) => entry.default === true) ??
-        agentList[0];
-    const selectedWorkspace = selected ? optionalString(selected.workspace) : "";
-    if (selectedWorkspace) {
-        return expandUserPath(selectedWorkspace);
-    }
-    const defaults = objectRecord(agents.defaults);
-    const defaultWorkspace = optionalString(defaults.workspace);
-    if (defaultWorkspace) {
-        return expandUserPath(defaultWorkspace);
-    }
-    const profile = process.env.OPENCLAW_PROFILE?.trim();
-    if (profile && profile.toLowerCase() !== "default") {
-        return path.join(os.homedir(), ".openclaw", `workspace-${profile}`);
-    }
-    return path.join(os.homedir(), ".openclaw", "workspace");
+    throw new Error("UnsupportedError: workspaceDir must be explicitly provided in params or pluginConfig");
 }
 function agentIdFromSessionKey(sessionKey) {
     const parts = sessionKey.split(":");
