@@ -64,7 +64,9 @@ jobs:
           jwtGithubAudience: vault
           secrets: |
             kv/data/github-actions/openclaw-multi-session-plugins OPENCLAW_SSH_KEY | OPENCLAW_SSH_KEY ;
+            kv/data/github-actions/openclaw-multi-session-plugins OPENCLAW_SSH_KEY_B64 | OPENCLAW_SSH_KEY_B64 ;
             kv/data/github-actions/openclaw-multi-session-plugins SINGLE_NODE_VPS_SSH_PRIVATE_KEY | SINGLE_NODE_VPS_SSH_PRIVATE_KEY
+            kv/data/github-actions/openclaw-multi-session-plugins SINGLE_NODE_VPS_SSH_PRIVATE_KEY_B64 | SINGLE_NODE_VPS_SSH_PRIVATE_KEY_B64
 
       - name: Resolve target version
         id: version
@@ -122,12 +124,21 @@ jobs:
       - name: Configure SSH key
         env:
           OPENCLAW_SSH_KEY: ${{ steps.vault.outputs.OPENCLAW_SSH_KEY }}
+          OPENCLAW_SSH_KEY_B64: ${{ steps.vault.outputs.OPENCLAW_SSH_KEY_B64 }}
           SINGLE_NODE_VPS_SSH_PRIVATE_KEY: ${{ steps.vault.outputs.SINGLE_NODE_VPS_SSH_PRIVATE_KEY }}
+          SINGLE_NODE_VPS_SSH_PRIVATE_KEY_B64: ${{ steps.vault.outputs.SINGLE_NODE_VPS_SSH_PRIVATE_KEY_B64 }}
         run: |
           set -euo pipefail
-          SSH_KEY="${OPENCLAW_SSH_KEY:-}"
-          if [ -z "${SSH_KEY}" ]; then
-            SSH_KEY="${SINGLE_NODE_VPS_SSH_PRIVATE_KEY:-}"
+          SSH_KEY=""
+          if [ -n "${OPENCLAW_SSH_KEY_B64:-}" ]; then
+            SSH_KEY="$(printf '%s' "${OPENCLAW_SSH_KEY_B64}" | base64 -d)"
+          elif [ -n "${OPENCLAW_SSH_KEY:-}" ]; then
+            SSH_KEY="${OPENCLAW_SSH_KEY}"
+          fi
+          if [ -z "${SSH_KEY}" ] && [ -n "${SINGLE_NODE_VPS_SSH_PRIVATE_KEY_B64:-}" ]; then
+            SSH_KEY="$(printf '%s' "${SINGLE_NODE_VPS_SSH_PRIVATE_KEY_B64}" | base64 -d)"
+          elif [ -z "${SSH_KEY}" ] && [ -n "${SINGLE_NODE_VPS_SSH_PRIVATE_KEY:-}" ]; then
+            SSH_KEY="${SINGLE_NODE_VPS_SSH_PRIVATE_KEY}"
           fi
 
           if [ -z "${SSH_KEY}" ]; then
@@ -135,7 +146,7 @@ jobs:
             exit 1
           fi
           install -m 700 -d ~/.ssh
-          printf '%s' "${SSH_KEY}" > ~/.ssh/openclaw_ed25519
+          printf '%s\n' "${SSH_KEY}" > ~/.ssh/openclaw_ed25519
           chmod 600 ~/.ssh/openclaw_ed25519
           ssh-keyscan -H openclaw.svc.plus >> ~/.ssh/known_hosts 2>/dev/null || true
 
