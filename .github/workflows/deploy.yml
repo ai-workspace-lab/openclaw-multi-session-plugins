@@ -82,14 +82,22 @@ jobs:
           fi
 
       - name: Configure SSH key
+        env:
+          OPENCLAW_SSH_KEY: ${{ secrets.OPENCLAW_SSH_KEY }}
+          SINGLE_NODE_VPS_SSH_PRIVATE_KEY: ${{ secrets.SINGLE_NODE_VPS_SSH_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          if [ -z "${{ secrets.OPENCLAW_SSH_KEY }}" ]; then
-            echo "::error::Secret OPENCLAW_SSH_KEY is not set."
+          SSH_KEY="${OPENCLAW_SSH_KEY:-}"
+          if [ -z "${SSH_KEY}" ]; then
+            SSH_KEY="${SINGLE_NODE_VPS_SSH_PRIVATE_KEY:-}"
+          fi
+
+          if [ -z "${SSH_KEY}" ]; then
+            echo "::error::Neither OPENCLAW_SSH_KEY nor SINGLE_NODE_VPS_SSH_PRIVATE_KEY is set."
             exit 1
           fi
           install -m 700 -d ~/.ssh
-          printf '%s' "${{ secrets.OPENCLAW_SSH_KEY }}" > ~/.ssh/openclaw_ed25519
+          printf '%s' "${SSH_KEY}" > ~/.ssh/openclaw_ed25519
           chmod 600 ~/.ssh/openclaw_ed25519
           ssh-keyscan -H openclaw.svc.plus >> ~/.ssh/known_hosts 2>/dev/null || true
 
