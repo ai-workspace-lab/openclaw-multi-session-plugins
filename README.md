@@ -72,16 +72,18 @@ Equivalent config shape for a linked checkout:
 
 Prepare request params are supplied by the OpenClaw host, bridge, or APP
 runtime. On OpenClaw runtimes that expose a trusted plugin `sessionScope`, the
-plugin uses that scope first. Otherwise it falls back to bridge/app runtime
-params. The plugin treats `sessionKey`, `runId`, and `workspaceDir` as the
-mapping into OpenClaw's built-in multi-session model; it does not parse paths
-from chat text and does not invent fallback session/run identities. The optional
-agent tool does not expose these fields to the model; it only uses host-injected
-tool context.
+plugin uses that native scope first and maps native `sessionScope.sessionKey`
+to `openclawSessionKey` internally. External Gateway callers must use typed
+`appThreadKey`, `openclawSessionKey`, `runId`, and optional `workspaceDir`
+params. Legacy `sessionKey` is not accepted as a Gateway task or artifact lookup
+alias. The plugin does not parse paths from chat text and does not invent
+fallback session/run identities. The optional agent tool does not expose these
+fields to the model; it only uses host-injected tool context.
 
 ```json
 {
-  "sessionKey": "thread-main",
+  "appThreadKey": "draft:thread-main",
+  "openclawSessionKey": "agent:main:draft:thread-main",
   "runId": "turn-1",
   "workspaceDir": "/home/user/.openclaw/workspace"
 }
@@ -92,7 +94,7 @@ Prepare response payload:
 ```json
 {
   "runId": "turn-1",
-  "sessionKey": "thread-main",
+  "sessionKey": "agent:main:draft:thread-main",
   "remoteWorkingDirectory": "/home/user/.openclaw/workspace",
   "remoteWorkspaceRefKind": "remotePath",
   "artifactScope": "tasks/thread-main-.../turn-1-...",
@@ -107,7 +109,7 @@ Export request params:
 
 ```json
 {
-  "sessionKey": "thread-main",
+  "openclawSessionKey": "agent:main:draft:thread-main",
   "runId": "turn-1",
   "artifactScope": "tasks/thread-main-.../turn-1-...",
   "sinceUnixMs": 1770000000000,
@@ -121,7 +123,7 @@ Export response payload:
 ```json
 {
   "runId": "turn-1",
-  "sessionKey": "thread-main",
+  "sessionKey": "agent:main:draft:thread-main",
   "remoteWorkingDirectory": "/home/user/.openclaw/workspace",
   "remoteWorkspaceRefKind": "remotePath",
   "artifactScope": "tasks/thread-main-.../turn-1-...",
@@ -144,9 +146,10 @@ Export response payload:
 
 Files at or below `maxInlineBytes` also include `encoding: "base64"` and `content`.
 When `artifactScope` is omitted, export/list defaults to the current task scope
-derived from `sessionKey/runId`. `sinceUnixMs` is only a filter inside that task
-scope. The prepared task scope remains authoritative: when it contains files,
-the plugin exports only that scope.
+derived from `openclawSessionKey/runId` for Gateway calls, or from native
+`sessionScope.sessionKey/runId` for host-injected tool calls. `sinceUnixMs` is
+only a filter inside that task scope. The prepared task scope remains
+authoritative: when it contains files, the plugin exports only that scope.
 
 If the prepared task scope is empty, trusted Gateway callers may pass
 `expectedArtifactDirs` such as `["assets/images", "reports"]`. The plugin then
@@ -157,9 +160,10 @@ earlier task scopes.
 
 Each exported artifact includes `artifactRef`, a plugin-signed reference over
 the issued session/run scope, artifact scope, path, size, and SHA-256 digest. `read` accepts
-`artifactScope + relativePath` for the current `sessionKey/runId` task scope.
-Signed task `artifactRef` values are accepted only for the same `sessionKey/runId`
-that issued them. There is no unscoped arbitrary workspace read API.
+`artifactScope + relativePath` for the current `openclawSessionKey/runId` task
+scope. Signed task `artifactRef` values are accepted only for the same
+`openclawSessionKey/runId` that issued them. There is no unscoped arbitrary
+workspace read API.
 
 ## View And Download
 

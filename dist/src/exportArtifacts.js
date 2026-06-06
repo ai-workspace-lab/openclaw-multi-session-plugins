@@ -161,29 +161,6 @@ export async function exportXWorkmateArtifacts(input) {
             warnings.push(`Unable to read artifact scope timestamp: ${String(error)}`);
         }
     }
-    // Copy global media to task scope to fix path breakage
-    if (scopePrepared || sinceUnixMs > 0) {
-        for (const source of openClawSnapshotSources(params, pluginConfig)) {
-            const globalCandidates = await collectSnapshotSourceCandidates({
-                source,
-                sinceUnixMs: effectiveSince,
-                warnings,
-            });
-            for (const gc of globalCandidates) {
-                const destRelPath = safeSnapshotDestinationRelativePath(source.label, gc.relativePath);
-                const dest = path.join(scopeRoot, "artifacts", destRelPath.split("/").join(path.sep));
-                if (isWithinRoot(scopeRoot, dest)) {
-                    try {
-                        await fs.mkdir(path.dirname(dest), { recursive: true });
-                        await fs.copyFile(gc.absolutePath, dest);
-                    }
-                    catch (error) {
-                        warnings.push(`Failed to copy media file ${gc.relativePath}: ${String(error)}`);
-                    }
-                }
-            }
-        }
-    }
     const scopedCandidates = (await directoryExists(scopeRoot))
         ? await collectCandidates({
             scanRoot: scopeRoot,
@@ -776,13 +753,6 @@ function resolveWorkspaceDir(input) {
         return expandUserPath(explicit);
     }
     throw new Error("UnsupportedError: workspaceDir must be explicitly provided in params or pluginConfig");
-}
-function agentIdFromSessionKey(sessionKey) {
-    const parts = sessionKey.split(":");
-    if (parts.length >= 3 && parts[0] === "agent") {
-        return parts[1]?.trim() ?? "";
-    }
-    return "";
 }
 function safeRelativePath(root, target) {
     const relative = path.relative(root, target);

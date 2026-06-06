@@ -748,32 +748,6 @@ describe("exportXWorkmateArtifacts", () => {
     expect(result.warnings).toContain("artifact limit reached; skipped remaining files after 1");
   });
 
-  it("selects an agent workspace from agent session keys", async () => {
-    const mainRoot = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-main-"));
-    const agentRoot = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-agent-"));
-    await fs.writeFile(path.join(mainRoot, "main.txt"), "main");
-    const prepared = await prepareXWorkmateArtifacts({
-      params: { openclawSessionKey: "agent:research:thread-1", runId: "run-1" },
-      pluginConfig: { workspaceDir: agentRoot },
-    });
-    await fs.writeFile(path.join(prepared.artifactDirectory, "agent.txt"), "agent");
-
-    const result = await exportXWorkmateArtifacts({
-      params: {
-        openclawSessionKey: "agent:research:thread-1",
-        runId: "run-1",
-      },
-      config: {
-        agents: {
-          defaults: { workspace: mainRoot },
-          list: [{ id: "research", workspace: agentRoot }],
-        },
-      },
-    });
-
-    expect(result.artifacts.map((entry) => entry.relativePath)).toEqual(["agent.txt"]);
-  });
-
   it("rejects unscoped artifact reads by relative path", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
     await fs.mkdir(path.join(root, "reports"), { recursive: true });
