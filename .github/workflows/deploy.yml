@@ -65,7 +65,7 @@ jobs:
           secrets: |
             kv/data/github-actions/openclaw-multi-session-plugins OPENCLAW_SSH_KEY | OPENCLAW_SSH_KEY ;
             kv/data/github-actions/openclaw-multi-session-plugins OPENCLAW_SSH_KEY_B64 | OPENCLAW_SSH_KEY_B64 ;
-            kv/data/github-actions/openclaw-multi-session-plugins SINGLE_NODE_VPS_SSH_PRIVATE_KEY | SINGLE_NODE_VPS_SSH_PRIVATE_KEY
+            kv/data/github-actions/openclaw-multi-session-plugins SINGLE_NODE_VPS_SSH_PRIVATE_KEY | SINGLE_NODE_VPS_SSH_PRIVATE_KEY ;
             kv/data/github-actions/openclaw-multi-session-plugins SINGLE_NODE_VPS_SSH_PRIVATE_KEY_B64 | SINGLE_NODE_VPS_SSH_PRIVATE_KEY_B64
 
       - name: Resolve target version
