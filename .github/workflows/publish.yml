@@ -1,5 +1,8 @@
 name: Publish
 
+env:
+  VAULT_ADDR: https://vault.svc.plus
+
 on:
   workflow_dispatch:
   release:
@@ -16,6 +19,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Load Vault secrets
+        id: vault
+        uses: hashicorp/vault-action@v2
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          role: github-actions-openclaw-multi-session-plugins
+          jwtGithubAudience: vault
+          secrets: |
+            kv/data/github-actions/openclaw-multi-session-plugins NPM_TOKEN | NPM_TOKEN
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -54,7 +68,7 @@ jobs:
             echo "::notice::Publishing ${name}@${version} as npm user ${user}; npm will create this public package on first publish."
           fi
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ steps.vault.outputs.NPM_TOKEN }}
 
       - name: Check published version
         id: published
@@ -74,4 +88,4 @@ jobs:
         if: steps.published.outputs.exists != 'true'
         run: npm publish --provenance --access public
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ steps.vault.outputs.NPM_TOKEN }}

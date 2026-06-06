@@ -1,5 +1,8 @@
 name: Deploy
 
+env:
+  VAULT_ADDR: https://vault.svc.plus
+
 on:
   push:
     tags:
@@ -8,6 +11,11 @@ on:
   release:
     types:
       - published
+  workflow_run:
+    workflows:
+      - Publish
+    types:
+      - completed
   workflow_dispatch:
     inputs:
       version:
@@ -29,21 +37,47 @@ concurrency:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   install-on-host:
     name: Update plugin on ubuntu@openclaw.svc.plus
     runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'release')
     env:
       SSH_HOST: ubuntu@openclaw.svc.plus
       PLUGIN_NAME: openclaw-multi-session-plugins
     steps:
+      - name: Checkout published source
+        if: github.event_name == 'workflow_run'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Load Vault secrets
+        id: vault
+        uses: hashicorp/vault-action@v2
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          role: github-actions-openclaw-multi-session-plugins
+          jwtGithubAudience: vault
+          secrets: |
+            kv/data/github-actions/openclaw-multi-session-plugins OPENCLAW_SSH_KEY | OPENCLAW_SSH_KEY ;
+            kv/data/github-actions/openclaw-multi-session-plugins SINGLE_NODE_VPS_SSH_PRIVATE_KEY | SINGLE_NODE_VPS_SSH_PRIVATE_KEY
+
       - name: Resolve target version
         id: version
         run: |
           set -euo pipefail
           if [ -n "${{ inputs.version }}" ]; then
             value="${{ inputs.version }}"
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            if [ ! -f package.json ]; then
+              echo "::error::package.json not found after checking out workflow_run source"
+              exit 1
+            fi
+            value="$(node -p "require('./package.json').version")"
           else
             ref="${GITHUB_REF_NAME:-}"
             value="${ref}"
@@ -74,7 +108,11 @@ jobs:
             echo "source=npm" >> "$GITHUB_OUTPUT"
             echo "install_spec=${PACKAGE}" >> "$GITHUB_OUTPUT"
           else
-            ref="${GITHUB_REF_NAME:-release/v${VERSION}}"
+            if [ "${{ github.event_name }}" = "workflow_run" ]; then
+              ref="${{ github.event.workflow_run.head_sha }}"
+            else
+              ref="${GITHUB_REF_NAME:-release/v${VERSION}}"
+            fi
             install_spec="git+${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git#${ref}"
             echo "::warning::${PACKAGE} is not published to npm yet; installing from ${install_spec}"
             echo "source=github" >> "$GITHUB_OUTPUT"
@@ -83,8 +121,8 @@ jobs:
 
       - name: Configure SSH key
         env:
-          OPENCLAW_SSH_KEY: ${{ secrets.OPENCLAW_SSH_KEY }}
-          SINGLE_NODE_VPS_SSH_PRIVATE_KEY: ${{ secrets.SINGLE_NODE_VPS_SSH_PRIVATE_KEY }}
+          OPENCLAW_SSH_KEY: ${{ steps.vault.outputs.OPENCLAW_SSH_KEY }}
+          SINGLE_NODE_VPS_SSH_PRIVATE_KEY: ${{ steps.vault.outputs.SINGLE_NODE_VPS_SSH_PRIVATE_KEY }}
         run: |
           set -euo pipefail
           SSH_KEY="${OPENCLAW_SSH_KEY:-}"
