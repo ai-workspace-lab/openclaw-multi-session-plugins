@@ -228,8 +228,11 @@ jobs:
           fi
 
           # Verify the installed version matches the requested version.
-          INSTALLED="$(npm ls -g "${PLUGIN_NAME}" --depth=0 2>/dev/null \
-            | awk -F'[@:]' '/'"${PLUGIN_NAME}"'@/ {print $2; exit}' || true)"
+          GLOBAL_ROOT="$(npm root -g)"
+          INSTALLED=""
+          if [ -f "${GLOBAL_ROOT}/${PLUGIN_NAME}/package.json" ]; then
+            INSTALLED="$(node -p "require('${GLOBAL_ROOT}/${PLUGIN_NAME}/package.json').version")"
+          fi
           if [ "${INSTALLED}" != "${VERSION}" ]; then
             echo "::remote-error::Verification failed: expected ${VERSION}, found ${INSTALLED:-<none>}"
             exit 1
