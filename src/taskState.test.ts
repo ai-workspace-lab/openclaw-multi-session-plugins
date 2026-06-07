@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   XWORKMATE_PLUGIN_ID,
@@ -8,11 +11,11 @@ import {
   readXWorkmateSessionMapping,
 } from "./taskState.js";
 
-function createApiFixture(tasks: Record<string, unknown> = {}) {
+function createApiFixture(tasks: Record<string, unknown> = {}, pluginConfig: Record<string, unknown> = {}) {
   const sessions = new Map<string, any>();
   const api = {
     config: {},
-    pluginConfig: {},
+    pluginConfig,
     logger: { warn: () => {} },
     runtime: {
       agent: {
@@ -56,6 +59,10 @@ function createApiFixture(tasks: Record<string, unknown> = {}) {
     },
   };
   return { api: api as any, sessions };
+}
+
+async function createWorkspaceFixture() {
+  return fs.mkdtemp(path.join(os.tmpdir(), "xworkmate-task-state-"));
 }
 
 describe("xworkmate task state mapping", () => {
@@ -159,8 +166,56 @@ describe("xworkmate task state mapping", () => {
     });
   });
 
-  it("returns no_native_task_record instead of inferring success from artifacts", async () => {
-    const { api } = createApiFixture();
+  it("resolves completed snapshot from task artifacts when native task record is unavailable", async () => {
+    const workspaceDir = await createWorkspaceFixture();
+    const appThreadKey = "draft:sample-task";
+    const openclawSessionKey = "agent:main:draft:sample-task";
+    const runId = "turn-sample";
+    const artifactDir = path.join(workspaceDir, "tasks", "agent_main_draft_sample-task", runId);
+    await fs.mkdir(artifactDir, { recursive: true });
+    await fs.writeFile(path.join(artifactDir, "report.md"), "# Report\n", "utf8");
+
+    const { api } = createApiFixture({}, { workspaceDir });
+    await recordXWorkmateSessionMapping({
+      api,
+      params: {
+        schemaVersion: 1,
+        appThreadKey,
+        openclawSessionKey,
+        runId,
+      },
+    });
+
+    const result = await getXWorkmateTaskSnapshot({
+      api,
+      params: {
+        appThreadKey,
+        openclawSessionKey,
+        runId,
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      status: "completed",
+      taskStatus: "succeeded",
+      openclawSessionKey,
+      runId,
+      task: {
+        source: "artifact_fallback",
+      },
+      artifacts: [
+        {
+          relativePath: "report.md",
+          contentType: "text/markdown",
+        },
+      ],
+    });
+  });
+
+  it("returns no_native_task_record when neither native task record nor task artifacts exist", async () => {
+    const workspaceDir = await createWorkspaceFixture();
+    const { api } = createApiFixture({}, { workspaceDir });
     await recordXWorkmateSessionMapping({
       api,
       params: {

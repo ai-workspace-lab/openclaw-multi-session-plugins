@@ -1,20 +1,27 @@
 # openclaw-multi-session-plugins
 
-OpenClaw plugin for logical multi-session isolation and scoped XWorkmate artifact manifests.
+OpenClaw plugin for per-session workspace isolation and scoped XWorkmate artifact handling.
 
 ## Why
 
 XWorkmate talks to OpenClaw through `xworkmate-bridge` using the app-facing
 `/acp` and `/acp/rpc` contract with OpenClaw routing metadata. The bridge sends
 `chat.send`, waits for `agent.wait`, then asks this plugin for a session/run-scoped artifact manifest.
-The APP can then sync generated files into its local thread workspace without
+The app can then sync generated files into its local thread workspace without
 changing the UI or adding provider-specific routes.
 
 This plugin is not a scheduler or bridge client. OpenClaw core owns sub-agents,
 multi-agent routing, queues, cron, task registry state, and cross-session
-execution. This package only adapts those existing OpenClaw task/session
-identities into isolated artifact directories, session key mapping, and signed
-artifact reads.
+execution. This package only adapts existing OpenClaw task and session
+identities into isolated artifact directories, durable session key mappings,
+and signed artifact reads.
+
+In practice, it provides:
+
+- session preparation for a specific app thread and run
+- task-scoped artifact directories under the resolved OpenClaw workspace
+- safe export and read operations for XWorkmate Bridge
+- signed artifact references that are bound to the issuing session and run
 
 It registers the minimal Gateway methods needed by XWorkmate:
 

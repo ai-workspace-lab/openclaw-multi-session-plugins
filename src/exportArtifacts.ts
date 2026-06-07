@@ -935,7 +935,7 @@ function resolveWorkspaceDir(input: {
   if (explicit) {
     return expandUserPath(explicit);
   }
-  throw new Error("UnsupportedError: workspaceDir must be explicitly provided in params or pluginConfig");
+  return expandUserPath(path.join("~", ".openclaw", "workspace"));
 }
 
 function safeRelativePath(root: string, target: string): string {

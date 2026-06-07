@@ -253,25 +253,54 @@ export async function getXWorkmateTaskSnapshot(input: {
     runId,
     taskId,
   });
+  const includeArtifacts = params.includeArtifacts !== false;
   if (!task) {
+    const exported = includeArtifacts && runId
+      ? await exportArtifactsForTaskLookup(input, params, openclawSessionKey, runId, mapping)
+      : undefined;
+    if (exported?.artifacts.length) {
+      return {
+        success: true,
+        status: "completed",
+        taskStatus: "succeeded",
+        mode: "gateway-chat",
+        mapping,
+        appThreadKey: mapping?.appThreadKey ?? appThreadKey,
+        openclawSessionKey,
+        runId,
+        taskId: taskId || runId,
+        task: {
+          taskId: taskId || runId,
+          runId,
+          status: "succeeded",
+          source: "artifact_fallback",
+        },
+        expectedArtifactDirs: mapping?.expectedArtifactDirs ?? [],
+        artifactScope: exported.artifactScope,
+        remoteWorkingDirectory: exported.remoteWorkingDirectory,
+        remoteWorkspaceRefKind: exported.remoteWorkspaceRefKind,
+        scopeKind: exported.scopeKind,
+        artifacts: exported.artifacts,
+        warnings: [
+          ...exported.warnings,
+          `Native OpenClaw task record was unavailable for ${openclawSessionKey}; resolved from task artifacts.`,
+        ],
+        artifactCount: exported.artifacts.length,
+      };
+    }
     const code: XWorkmateTaskLookupErrorCode = runId || taskId ? "no_native_task_record" : "task_not_found";
     return lookupError(code, `No native OpenClaw task record found for ${openclawSessionKey}`, mapping);
   }
 
   const taskStatus = optionalString((task as any).status) || "running";
-  const includeArtifacts = params.includeArtifacts !== false;
   const exported = includeArtifacts
-    ? await exportXWorkmateArtifacts({
-        params: {
-          ...params,
-          openclawSessionKey,
-          runId: runId || optionalString((task as any).runId) || optionalString((task as any).taskId),
-          expectedArtifactDirs: mapping?.expectedArtifactDirs ?? normalizeExpectedArtifactDirs(params.expectedArtifactDirs),
-          includeContent: params.includeContent ?? false,
-        },
-        config: input.api.config,
-        pluginConfig: input.api.pluginConfig,
-      })
+    ? await exportArtifactsForTaskLookup(
+        input,
+        params,
+        openclawSessionKey,
+        runId || optionalString((task as any).runId) || optionalString((task as any).taskId),
+        mapping,
+      )
     : undefined;
 
   return {
@@ -294,6 +323,26 @@ export async function getXWorkmateTaskSnapshot(input: {
     warnings: exported?.warnings ?? [],
     artifactCount: exported?.artifacts.length ?? 0,
   };
+}
+
+async function exportArtifactsForTaskLookup(
+  input: { api: OpenClawPluginApi; params: Record<string, unknown> },
+  params: Record<string, unknown>,
+  openclawSessionKey: string,
+  runId: string,
+  mapping?: XWorkmateSessionMappingV1,
+) {
+  return exportXWorkmateArtifacts({
+    params: {
+      ...params,
+      openclawSessionKey,
+      runId,
+      expectedArtifactDirs: mapping?.expectedArtifactDirs ?? normalizeExpectedArtifactDirs(params.expectedArtifactDirs),
+      includeContent: params.includeContent ?? false,
+    },
+    config: input.api.config,
+    pluginConfig: input.api.pluginConfig,
+  });
 }
 
 function resolveNativeTask(
