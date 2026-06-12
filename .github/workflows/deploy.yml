@@ -48,11 +48,10 @@ jobs:
       SSH_HOST: ubuntu@openclaw.svc.plus
       PLUGIN_NAME: openclaw-multi-session-plugins
     steps:
-      - name: Checkout published source
-        if: github.event_name == 'workflow_run'
+      - name: Checkout source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
 
       - name: Load Vault secrets
         id: vault
@@ -101,25 +100,48 @@ jobs:
         id: install
         env:
           VERSION: ${{ steps.version.outputs.value }}
+          FORCE: ${{ inputs.force || 'false' }}
         run: |
           set -euo pipefail
           PACKAGE="${PLUGIN_NAME}@${VERSION}"
-          if npm view "${PACKAGE}" version >/dev/null 2>&1; then
+          if [ "${FORCE}" != "true" ] && npm view "${PACKAGE}" version >/dev/null 2>&1; then
             PUBLISHED="$(npm view "${PACKAGE}" version)"
             echo "::notice::${PLUGIN_NAME}@${PUBLISHED} is available on npm"
             echo "source=npm" >> "$GITHUB_OUTPUT"
             echo "install_spec=${PACKAGE}" >> "$GITHUB_OUTPUT"
           else
-            if [ "${{ github.event_name }}" = "workflow_run" ]; then
-              ref="${{ github.event.workflow_run.head_sha }}"
-            else
-              ref="${GITHUB_REF_NAME:-release/v${VERSION}}"
-            fi
-            install_spec="git+${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git#${ref}"
-            echo "::warning::${PACKAGE} is not published to npm yet; installing from ${install_spec}"
-            echo "source=github" >> "$GITHUB_OUTPUT"
+            install_spec="/tmp/${PLUGIN_NAME}-${VERSION}-${GITHUB_SHA}.tgz"
+            echo "::warning::Building and installing ${install_spec} from the checked-out source"
+            echo "source=archive" >> "$GITHUB_OUTPUT"
             echo "install_spec=${install_spec}" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Setup Node
+        if: steps.install.outputs.source == 'archive'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        if: steps.install.outputs.source == 'archive'
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.28.2 --activate
+
+      - name: Build archive install source
+        id: archive
+        if: steps.install.outputs.source == 'archive'
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm test
+          pnpm typecheck
+          pnpm pack
+          tarball="${PLUGIN_NAME}-${VERSION}.tgz"
+          test -f "${tarball}"
+          echo "tarball=${tarball}" >> "$GITHUB_OUTPUT"
 
       - name: Configure SSH key
         env:
@@ -154,6 +176,12 @@ jobs:
         run: |
           ssh -i ~/.ssh/openclaw_ed25519 -o BatchMode=yes -o ConnectTimeout=10 \
             "${SSH_HOST}" 'echo "connected to $(hostname) as $(whoami)"'
+
+      - name: Upload archive install source
+        if: steps.install.outputs.source == 'archive'
+        run: |
+          scp -i ~/.ssh/openclaw_ed25519 -o BatchMode=yes \
+            "${{ steps.archive.outputs.tarball }}" "${SSH_HOST}:${{ steps.install.outputs.install_spec }}"
 
       - name: Install or update plugin on remote host
         env:
@@ -213,7 +241,8 @@ jobs:
 
           install_plugin() {
             if command -v openclaw >/dev/null 2>&1; then
-              openclaw plugins install "${INSTALL_SPEC}" \
+              openclaw plugins install --force "${INSTALL_SPEC}" \
+                || openclaw plugins install "${INSTALL_SPEC}" \
                 || openclaw plugins update "${INSTALL_SPEC}" \
                 || npm install -g "${INSTALL_SPEC}"
             else
@@ -225,6 +254,7 @@ jobs:
 
           if command -v openclaw >/dev/null 2>&1; then
             openclaw plugins enable "${PLUGIN_NAME}" || true
+            systemctl --user restart openclaw-gateway.service || true
           fi
 
           # Verify the installed version matches the requested version.
