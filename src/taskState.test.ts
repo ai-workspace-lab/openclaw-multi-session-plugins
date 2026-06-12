@@ -166,14 +166,14 @@ describe("xworkmate task state mapping", () => {
     });
   });
 
-  it("resolves completed snapshot from task artifacts when native task record is unavailable", async () => {
+  it("reports unknown evidence from task artifacts when native task record is unavailable", async () => {
     const workspaceDir = await createWorkspaceFixture();
     const appThreadKey = "draft:sample-task";
     const openclawSessionKey = "agent:main:draft:sample-task";
     const runId = "turn-sample";
     const artifactDir = path.join(workspaceDir, "tasks", "agent_main_draft_sample-task", runId);
     await fs.mkdir(artifactDir, { recursive: true });
-    await fs.writeFile(path.join(artifactDir, "report.md"), "# Report\n", "utf8");
+    await fs.writeFile(path.join(artifactDir, "series.config.json"), "{}\n", "utf8");
 
     const { api } = createApiFixture({}, { workspaceDir });
     await recordXWorkmateSessionMapping({
@@ -196,21 +196,25 @@ describe("xworkmate task state mapping", () => {
     });
 
     expect(result).toMatchObject({
-      success: true,
-      status: "completed",
-      taskStatus: "succeeded",
+      success: false,
+      status: "unknown",
+      taskStatus: "unknown",
+      evidence: "artifacts_present",
       openclawSessionKey,
       runId,
       task: {
         source: "artifact_fallback",
+        status: "unknown",
       },
       artifacts: [
         {
-          relativePath: "report.md",
-          contentType: "text/markdown",
+          relativePath: "series.config.json",
+          contentType: "application/json",
         },
       ],
+      artifactCount: 1,
     });
+    expect((result.warnings as string[]).some((entry) => entry.includes("task status is unknown"))).toBe(true);
   });
 
   it("returns no_native_task_record when neither native task record nor task artifacts exist", async () => {

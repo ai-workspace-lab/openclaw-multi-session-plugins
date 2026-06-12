@@ -260,9 +260,10 @@ export async function getXWorkmateTaskSnapshot(input: {
       : undefined;
     if (exported?.artifacts.length) {
       return {
-        success: true,
-        status: "completed",
-        taskStatus: "succeeded",
+        success: false,
+        status: "unknown",
+        taskStatus: "unknown",
+        evidence: "artifacts_present",
         mode: "gateway-chat",
         mapping,
         appThreadKey: mapping?.appThreadKey ?? appThreadKey,
@@ -272,7 +273,7 @@ export async function getXWorkmateTaskSnapshot(input: {
         task: {
           taskId: taskId || runId,
           runId,
-          status: "succeeded",
+          status: "unknown",
           source: "artifact_fallback",
         },
         expectedArtifactDirs: mapping?.expectedArtifactDirs ?? [],
@@ -281,9 +282,11 @@ export async function getXWorkmateTaskSnapshot(input: {
         remoteWorkspaceRefKind: exported.remoteWorkspaceRefKind,
         scopeKind: exported.scopeKind,
         artifacts: exported.artifacts,
+        constraintSatisfied: exported.constraintSatisfied,
+        missingRequiredExtensions: exported.missingRequiredExtensions,
         warnings: [
           ...exported.warnings,
-          `Native OpenClaw task record was unavailable for ${openclawSessionKey}; resolved from task artifacts.`,
+          `Native OpenClaw task record was unavailable for ${openclawSessionKey}; artifacts are present but task status is unknown.`,
         ],
         artifactCount: exported.artifacts.length,
       };
@@ -320,6 +323,8 @@ export async function getXWorkmateTaskSnapshot(input: {
     remoteWorkspaceRefKind: exported?.remoteWorkspaceRefKind,
     scopeKind: exported?.scopeKind,
     artifacts: exported?.artifacts ?? [],
+    constraintSatisfied: exported?.constraintSatisfied,
+    missingRequiredExtensions: exported?.missingRequiredExtensions,
     warnings: exported?.warnings ?? [],
     artifactCount: exported?.artifacts.length ?? 0,
   };
