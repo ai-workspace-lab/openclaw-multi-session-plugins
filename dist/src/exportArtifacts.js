@@ -2,6 +2,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { normalizeExpectedArtifactDirs } from "./expectedArtifactDirs.js";
 const DEFAULT_MAX_FILES = 64;
 const DEFAULT_MAX_INLINE_BYTES = 10 * 1024 * 1024;
 const TASK_SCOPE_ROOT = "tasks";
@@ -369,24 +370,7 @@ export async function readXWorkmateArtifact(input) {
     };
     return result;
 }
-export function normalizeExpectedArtifactDirs(value) {
-    if (!Array.isArray(value)) {
-        return [];
-    }
-    const seen = new Set();
-    const result = [];
-    for (const entry of value) {
-        const normalized = safeInputRelativePath(entry, "expectedArtifactDir");
-        const withSlash = normalized.endsWith("/") ? normalized : `${normalized}/`;
-        if (seen.has(withSlash)) {
-            continue;
-        }
-        seen.add(withSlash);
-        result.push(withSlash);
-    }
-    return result;
-}
-export function normalizeRequiredExtensions(value) {
+function normalizeRequiredExtensions(value) {
     if (!Array.isArray(value)) {
         return [];
     }

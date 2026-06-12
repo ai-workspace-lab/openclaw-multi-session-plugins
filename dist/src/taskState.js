@@ -1,5 +1,6 @@
 import { exportXWorkmateArtifacts } from "./exportArtifacts.js";
-export const XWORKMATE_PLUGIN_ID = "openclaw-multi-session-plugins";
+import { normalizeExpectedArtifactDirs } from "./expectedArtifactDirs.js";
+const XWORKMATE_PLUGIN_ID = "openclaw-multi-session-plugins";
 export const XWORKMATE_SESSION_EXTENSION_NAMESPACE = "xworkmate.sessionMapping";
 export function registerXWorkmateSessionExtension(api) {
     const registerExtension = api.session?.state?.registerSessionExtension ?? api.registerSessionExtension;
@@ -28,7 +29,7 @@ export async function recordXWorkmateSessionMapping(input) {
         source: input.source ?? "bridge_prepare",
     });
 }
-export function normalizeXWorkmateTaskMetadataV1(input) {
+function normalizeXWorkmateTaskMetadataV1(input) {
     const envelope = asRecord(input.xworkmate) ?? asRecord(input.xworkmateMetadata) ?? input;
     const schemaVersion = Number(envelope.schemaVersion ?? 1);
     if (schemaVersion !== 1) {
@@ -46,29 +47,7 @@ export function normalizeXWorkmateTaskMetadataV1(input) {
         createdAt,
     });
 }
-export function normalizeExpectedArtifactDirs(value) {
-    if (!Array.isArray(value)) {
-        return [];
-    }
-    const seen = new Set();
-    const result = [];
-    for (const entry of value) {
-        const text = optionalString(entry).replaceAll("\\", "/").replace(/^\.\/+/u, "");
-        if (!text || seen.has(text)) {
-            continue;
-        }
-        if (text.startsWith("/") || /^[A-Za-z]:\//u.test(text) || text.split("/").includes("..")) {
-            throw new Error("expectedArtifactDirs must be relative paths without traversal");
-        }
-        const normalized = text.endsWith("/") ? text : `${text}/`;
-        if (!seen.has(normalized)) {
-            seen.add(normalized);
-            result.push(normalized);
-        }
-    }
-    return result;
-}
-export async function upsertXWorkmateSessionMapping(api, input) {
+async function upsertXWorkmateSessionMapping(api, input) {
     const patchSessionEntry = resolvePatchSessionEntry(api);
     if (!patchSessionEntry) {
         throw new Error("OpenClaw runtime session patch API is unavailable");
@@ -114,7 +93,7 @@ export async function upsertXWorkmateSessionMapping(api, input) {
     }
     return mapping;
 }
-export async function readXWorkmateSessionMapping(api, lookup) {
+async function readXWorkmateSessionMapping(api, lookup) {
     const getSessionEntry = resolveGetSessionEntry(api);
     if (!getSessionEntry) {
         return undefined;

@@ -1,5 +1,4 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-export declare const XWORKMATE_PLUGIN_ID = "openclaw-multi-session-plugins";
 export declare const XWORKMATE_SESSION_EXTENSION_NAMESPACE = "xworkmate.sessionMapping";
 export type XWorkmateTaskMetadataV1 = {
     schemaVersion: 1;
@@ -35,17 +34,6 @@ export declare function recordXWorkmateSessionMapping(input: {
     artifactScope?: string;
     source?: XWorkmateSessionMappingSource;
 }): Promise<XWorkmateSessionMappingV1>;
-export declare function normalizeXWorkmateTaskMetadataV1(input: Record<string, unknown>): XWorkmateTaskMetadataV1;
-export declare function normalizeExpectedArtifactDirs(value: unknown): string[];
-export declare function upsertXWorkmateSessionMapping(api: OpenClawPluginApi, input: {
-    metadata: XWorkmateTaskMetadataV1;
-    openclawSessionKey: string;
-    source: XWorkmateSessionMappingSource;
-}): Promise<XWorkmateSessionMappingV1>;
-export declare function readXWorkmateSessionMapping(api: OpenClawPluginApi, lookup: {
-    appThreadKey?: string;
-    openclawSessionKey?: string;
-}): Promise<XWorkmateSessionMappingV1 | undefined>;
 export declare function getXWorkmateTaskSnapshot(input: {
     api: OpenClawPluginApi;
     params: Record<string, unknown>;

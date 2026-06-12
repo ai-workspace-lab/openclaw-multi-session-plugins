@@ -1,4 +1,4 @@
-export type XWorkmateArtifact = {
+type XWorkmateArtifact = {
     relativePath: string;
     label: string;
     contentType: string;
@@ -10,8 +10,8 @@ export type XWorkmateArtifact = {
     encoding?: "base64";
     content?: string;
 };
-export type XWorkmateArtifactScopeKind = "task";
-export type XWorkmateArtifactExport = {
+type XWorkmateArtifactScopeKind = "task";
+type XWorkmateArtifactExport = {
     runId: string;
     sessionKey: string;
     remoteWorkingDirectory: string;
@@ -25,7 +25,7 @@ export type XWorkmateArtifactExport = {
     constraintSatisfied: boolean;
     missingRequiredExtensions: string[];
 };
-export type XWorkmateArtifactPrepare = {
+type XWorkmateArtifactPrepare = {
     runId: string;
     sessionKey: string;
     remoteWorkingDirectory: string;
@@ -38,11 +38,11 @@ export type XWorkmateArtifactPrepare = {
     expectedArtifactDirs: string[];
     expectedArtifactDirStatus: XWorkmateExpectedArtifactDirStatus[];
 };
-export type XWorkmateExpectedArtifactDirStatus = {
+type XWorkmateExpectedArtifactDirStatus = {
     relativePath: string;
     exists: boolean;
 };
-export type XWorkmateArtifactSnapshot = {
+type XWorkmateArtifactSnapshot = {
     runId: string;
     sessionKey: string;
     remoteWorkingDirectory: string;
@@ -68,8 +68,6 @@ export declare function prepareXWorkmateArtifacts(input: ExportInput): Promise<X
 export declare function collectAndSnapshotXWorkmateArtifacts(input: ExportInput): Promise<XWorkmateArtifactSnapshot>;
 export declare function exportXWorkmateArtifacts(input: ExportInput): Promise<XWorkmateArtifactExport>;
 export declare function readXWorkmateArtifact(input: ReadInput): Promise<XWorkmateArtifactExport>;
-export declare function normalizeExpectedArtifactDirs(value: unknown): string[];
-export declare function normalizeRequiredExtensions(value: unknown): string[];
 export declare function formatArtifactManifestMarkdown(input: {
     remoteWorkingDirectory: string;
     artifactScope?: string;

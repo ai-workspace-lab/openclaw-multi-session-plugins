@@ -3,13 +3,12 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  XWORKMATE_PLUGIN_ID,
   XWORKMATE_SESSION_EXTENSION_NAMESPACE,
   getXWorkmateTaskSnapshot,
-  normalizeXWorkmateTaskMetadataV1,
   recordXWorkmateSessionMapping,
-  readXWorkmateSessionMapping,
 } from "./taskState.js";
+
+const XWORKMATE_PLUGIN_ID = "openclaw-multi-session-plugins";
 
 function createApiFixture(tasks: Record<string, unknown> = {}, pluginConfig: Record<string, unknown> = {}) {
   const sessions = new Map<string, any>();
@@ -66,14 +65,19 @@ async function createWorkspaceFixture() {
 }
 
 describe("xworkmate task state mapping", () => {
-  it("requires typed appThreadKey metadata", () => {
-    expect(() =>
-      normalizeXWorkmateTaskMetadataV1({
-        schemaVersion: 1,
-        sessionKey: "draft:legacy",
-        expectedArtifactDirs: ["artifacts/"],
+  it("requires typed appThreadKey metadata", async () => {
+    const { api } = createApiFixture();
+
+    await expect(
+      recordXWorkmateSessionMapping({
+        api,
+        params: {
+          schemaVersion: 1,
+          sessionKey: "draft:legacy",
+          expectedArtifactDirs: ["artifacts/"],
+        },
       }),
-    ).toThrow("appThreadKey required");
+    ).rejects.toThrow("appThreadKey required");
   });
 
   it("writes a durable pluginExtensions mapping without deriving the OpenClaw key", async () => {
@@ -273,7 +277,13 @@ describe("xworkmate task state mapping", () => {
   });
 
   it("can read mapping by appThreadKey from pluginExtensions", async () => {
-    const { api } = createApiFixture();
+    const { api } = createApiFixture({
+      "draft:lookup:run-1": {
+        taskId: "task-1",
+        runId: "run-1",
+        status: "succeeded",
+      },
+    });
     await recordXWorkmateSessionMapping({
       api,
       params: {
@@ -284,7 +294,17 @@ describe("xworkmate task state mapping", () => {
       },
     });
 
-    await expect(readXWorkmateSessionMapping(api, { appThreadKey: "draft:lookup" })).resolves.toMatchObject({
+    await expect(
+      getXWorkmateTaskSnapshot({
+        api,
+        params: {
+          appThreadKey: "draft:lookup",
+          runId: "run-1",
+          includeArtifacts: false,
+        },
+      }),
+    ).resolves.toMatchObject({
+      success: true,
       appThreadKey: "draft:lookup",
       openclawSessionKey: "draft:lookup",
     });

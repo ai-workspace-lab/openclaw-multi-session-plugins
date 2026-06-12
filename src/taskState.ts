@@ -1,7 +1,8 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { exportXWorkmateArtifacts } from "./exportArtifacts.js";
+import { normalizeExpectedArtifactDirs } from "./expectedArtifactDirs.js";
 
-export const XWORKMATE_PLUGIN_ID = "openclaw-multi-session-plugins";
+const XWORKMATE_PLUGIN_ID = "openclaw-multi-session-plugins";
 export const XWORKMATE_SESSION_EXTENSION_NAMESPACE = "xworkmate.sessionMapping";
 
 export type XWorkmateTaskMetadataV1 = {
@@ -101,7 +102,7 @@ export async function recordXWorkmateSessionMapping(input: {
   });
 }
 
-export function normalizeXWorkmateTaskMetadataV1(input: Record<string, unknown>): XWorkmateTaskMetadataV1 {
+function normalizeXWorkmateTaskMetadataV1(input: Record<string, unknown>): XWorkmateTaskMetadataV1 {
   const envelope = asRecord(input.xworkmate) ?? asRecord(input.xworkmateMetadata) ?? input;
   const schemaVersion = Number(envelope.schemaVersion ?? 1);
   if (schemaVersion !== 1) {
@@ -120,30 +121,7 @@ export function normalizeXWorkmateTaskMetadataV1(input: Record<string, unknown>)
   }) as XWorkmateTaskMetadataV1;
 }
 
-export function normalizeExpectedArtifactDirs(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const entry of value) {
-    const text = optionalString(entry).replaceAll("\\", "/").replace(/^\.\/+/u, "");
-    if (!text || seen.has(text)) {
-      continue;
-    }
-    if (text.startsWith("/") || /^[A-Za-z]:\//u.test(text) || text.split("/").includes("..")) {
-      throw new Error("expectedArtifactDirs must be relative paths without traversal");
-    }
-    const normalized = text.endsWith("/") ? text : `${text}/`;
-    if (!seen.has(normalized)) {
-      seen.add(normalized);
-      result.push(normalized);
-    }
-  }
-  return result;
-}
-
-export async function upsertXWorkmateSessionMapping(
+async function upsertXWorkmateSessionMapping(
   api: OpenClawPluginApi,
   input: {
     metadata: XWorkmateTaskMetadataV1;
@@ -198,7 +176,7 @@ export async function upsertXWorkmateSessionMapping(
   return mapping;
 }
 
-export async function readXWorkmateSessionMapping(
+async function readXWorkmateSessionMapping(
   api: OpenClawPluginApi,
   lookup: {
     appThreadKey?: string;

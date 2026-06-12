@@ -2,6 +2,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { normalizeExpectedArtifactDirs } from "./expectedArtifactDirs.js";
 
 const DEFAULT_MAX_FILES = 64;
 const DEFAULT_MAX_INLINE_BYTES = 10 * 1024 * 1024;
@@ -20,7 +21,7 @@ const SKIPPED_DIRS = new Set([
   "node_modules",
 ]);
 
-export type XWorkmateArtifact = {
+type XWorkmateArtifact = {
   relativePath: string;
   label: string;
   contentType: string;
@@ -33,9 +34,9 @@ export type XWorkmateArtifact = {
   content?: string;
 };
 
-export type XWorkmateArtifactScopeKind = "task";
+type XWorkmateArtifactScopeKind = "task";
 
-export type XWorkmateArtifactExport = {
+type XWorkmateArtifactExport = {
   runId: string;
   sessionKey: string;
   remoteWorkingDirectory: string;
@@ -50,7 +51,7 @@ export type XWorkmateArtifactExport = {
   missingRequiredExtensions: string[];
 };
 
-export type XWorkmateArtifactPrepare = {
+type XWorkmateArtifactPrepare = {
   runId: string;
   sessionKey: string;
   remoteWorkingDirectory: string;
@@ -64,12 +65,12 @@ export type XWorkmateArtifactPrepare = {
   expectedArtifactDirStatus: XWorkmateExpectedArtifactDirStatus[];
 };
 
-export type XWorkmateExpectedArtifactDirStatus = {
+type XWorkmateExpectedArtifactDirStatus = {
   relativePath: string;
   exists: boolean;
 };
 
-export type XWorkmateArtifactSnapshot = {
+type XWorkmateArtifactSnapshot = {
   runId: string;
   sessionKey: string;
   remoteWorkingDirectory: string;
@@ -491,25 +492,7 @@ export async function readXWorkmateArtifact(input: ReadInput): Promise<XWorkmate
   return result;
 }
 
-export function normalizeExpectedArtifactDirs(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const entry of value) {
-    const normalized = safeInputRelativePath(entry, "expectedArtifactDir");
-    const withSlash = normalized.endsWith("/") ? normalized : `${normalized}/`;
-    if (seen.has(withSlash)) {
-      continue;
-    }
-    seen.add(withSlash);
-    result.push(withSlash);
-  }
-  return result;
-}
-
-export function normalizeRequiredExtensions(value: unknown): string[] {
+function normalizeRequiredExtensions(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
   }
