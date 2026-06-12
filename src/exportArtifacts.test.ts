@@ -134,7 +134,128 @@ describe("exportXWorkmateArtifacts", () => {
     ).rejects.toThrow("expectedArtifactDir must stay inside the workspace");
   });
 
+  it("satisfies required artifact extensions when a matching artifact is exported", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { openclawSessionKey: "thread-main", runId: "run-required" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.writeFile(path.join(prepared.artifactDirectory, "final.PDF"), "pdf");
+    await fs.writeFile(path.join(prepared.artifactDirectory, "notes.md"), "notes");
 
+    const result = await exportXWorkmateArtifacts({
+      params: {
+        openclawSessionKey: "thread-main",
+        runId: "run-required",
+        requiredArtifactExtensions: [".pdf"],
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+
+    expect(result.constraintSatisfied).toBe(true);
+    expect(result.missingRequiredExtensions).toEqual([]);
+  });
+
+  it("reports missing required artifact extensions", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { openclawSessionKey: "thread-main", runId: "run-missing-required" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.writeFile(path.join(prepared.artifactDirectory, "notes.md"), "notes");
+
+    const result = await exportXWorkmateArtifacts({
+      params: {
+        openclawSessionKey: "thread-main",
+        runId: "run-missing-required",
+        requiredArtifactExtensions: ["pdf"],
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+
+    expect(result.constraintSatisfied).toBe(false);
+    expect(result.missingRequiredExtensions).toEqual(["pdf"]);
+  });
+
+  it("treats an empty required artifact extension list as satisfied", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { openclawSessionKey: "thread-main", runId: "run-empty-required" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.writeFile(path.join(prepared.artifactDirectory, "notes.md"), "notes");
+
+    const result = await exportXWorkmateArtifacts({
+      params: {
+        openclawSessionKey: "thread-main",
+        runId: "run-empty-required",
+        requiredArtifactExtensions: [],
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+
+    expect(result.constraintSatisfied).toBe(true);
+    expect(result.missingRequiredExtensions).toEqual([]);
+  });
+
+  it("keeps required-extension artifacts before truncating export results", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { openclawSessionKey: "thread-main", runId: "run-required-limit" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.writeFile(path.join(prepared.artifactDirectory, "final.mp4"), "mp4");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    for (let index = 0; index < 64; index += 1) {
+      await fs.writeFile(path.join(prepared.artifactDirectory, `part-${String(index).padStart(2, "0")}.txt`), "txt");
+    }
+
+    const result = await exportXWorkmateArtifacts({
+      params: {
+        openclawSessionKey: "thread-main",
+        runId: "run-required-limit",
+        requiredArtifactExtensions: ["mp4"],
+        maxFiles: 64,
+        maxInlineBytes: 0,
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+
+    expect(result.artifacts).toHaveLength(64);
+    expect(result.artifacts.some((entry) => entry.relativePath === "final.mp4")).toBe(true);
+    expect(result.constraintSatisfied).toBe(true);
+    expect(result.missingRequiredExtensions).toEqual([]);
+    expect(result.warnings).toContain("artifact limit reached; skipped remaining files after 64");
+  });
+
+  it("keeps mtime and relative path ordering when no required extensions are provided", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { openclawSessionKey: "thread-main", runId: "run-no-required-order" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.writeFile(path.join(prepared.artifactDirectory, "older.txt"), "older");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await fs.writeFile(path.join(prepared.artifactDirectory, "newer-b.txt"), "newer");
+    await fs.writeFile(path.join(prepared.artifactDirectory, "newer-a.txt"), "newer");
+
+    const result = await exportXWorkmateArtifacts({
+      params: {
+        openclawSessionKey: "thread-main",
+        runId: "run-no-required-order",
+        maxInlineBytes: 0,
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+
+    expect(result.artifacts.map((entry) => entry.relativePath)).toEqual([
+      "newer-a.txt",
+      "newer-b.txt",
+      "older.txt",
+    ]);
+    expect(result.constraintSatisfied).toBe(true);
+    expect(result.missingRequiredExtensions).toEqual([]);
+  });
 
   it("snapshots OpenClaw media and tmp outputs into the current task artifact scope", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));

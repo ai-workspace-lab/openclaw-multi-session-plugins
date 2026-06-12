@@ -129,6 +129,7 @@ export async function exportXWorkmateArtifacts(input) {
     const maxInlineBytes = nonNegativeInteger(params.maxInlineBytes, pluginConfig.maxInlineBytes, DEFAULT_MAX_INLINE_BYTES);
     const sinceUnixMs = nonNegativeNumber(params.sinceUnixMs, 0);
     const includeContent = optionalBoolean(params.includeContent, true);
+    const requiredArtifactExtensions = normalizeRequiredExtensions(params.requiredArtifactExtensions);
     const workspaceDir = resolveWorkspaceDir({
         config: input.config,
         pluginConfig,
@@ -194,6 +195,11 @@ export async function exportXWorkmateArtifacts(input) {
         warnings.push("artifact scope is not prepared for this task run");
     }
     candidates.sort((left, right) => {
+        const leftRequiredMatch = matchesRequiredExtension(left.relativePath, requiredArtifactExtensions) ? 1 : 0;
+        const rightRequiredMatch = matchesRequiredExtension(right.relativePath, requiredArtifactExtensions) ? 1 : 0;
+        if (rightRequiredMatch !== leftRequiredMatch) {
+            return rightRequiredMatch - leftRequiredMatch;
+        }
         if (right.mtimeMs !== left.mtimeMs) {
             return right.mtimeMs - left.mtimeMs;
         }
@@ -240,6 +246,7 @@ export async function exportXWorkmateArtifacts(input) {
         }
         artifacts.push(artifact);
     }
+    const missingRequiredExtensions = missingRequiredArtifactExtensions(artifacts, requiredArtifactExtensions);
     const result = {
         runId,
         sessionKey,
@@ -251,6 +258,8 @@ export async function exportXWorkmateArtifacts(input) {
         warnings,
         expectedArtifactDirs: expectedDirs,
         expectedArtifactDirStatus: await expectedArtifactDirStatuses(workspaceRoot, expectedDirs),
+        constraintSatisfied: missingRequiredExtensions.length === 0,
+        missingRequiredExtensions,
     };
     return result;
 }
@@ -355,6 +364,8 @@ export async function readXWorkmateArtifact(input) {
         warnings,
         expectedArtifactDirs: [],
         expectedArtifactDirStatus: [],
+        constraintSatisfied: true,
+        missingRequiredExtensions: [],
     };
     return result;
 }
@@ -374,6 +385,40 @@ export function normalizeExpectedArtifactDirs(value) {
         result.push(withSlash);
     }
     return result;
+}
+export function normalizeRequiredExtensions(value) {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    const seen = new Set();
+    const result = [];
+    for (const entry of value) {
+        const normalized = optionalString(entry)
+            .toLowerCase()
+            .replace(/^\.+/u, "");
+        if (!normalized || normalized.includes("/") || normalized.includes("\\") || normalized.includes("\0")) {
+            continue;
+        }
+        if (seen.has(normalized)) {
+            continue;
+        }
+        seen.add(normalized);
+        result.push(normalized);
+    }
+    return result;
+}
+function matchesRequiredExtension(relativePath, requiredExtensions) {
+    if (requiredExtensions.length === 0) {
+        return false;
+    }
+    const lowerPath = relativePath.toLowerCase();
+    return requiredExtensions.some((extension) => lowerPath.endsWith(`.${extension}`));
+}
+function missingRequiredArtifactExtensions(artifacts, requiredExtensions) {
+    if (requiredExtensions.length === 0) {
+        return [];
+    }
+    return requiredExtensions.filter((extension) => !artifacts.some((artifact) => artifact.relativePath.toLowerCase().endsWith(`.${extension}`)));
 }
 async function expectedArtifactDirStatuses(workspaceRoot, expectedArtifactDirs) {
     const statuses = [];

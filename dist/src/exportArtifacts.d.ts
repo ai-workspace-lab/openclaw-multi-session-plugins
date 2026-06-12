@@ -22,6 +22,8 @@ export type XWorkmateArtifactExport = {
     warnings: string[];
     expectedArtifactDirs: string[];
     expectedArtifactDirStatus: XWorkmateExpectedArtifactDirStatus[];
+    constraintSatisfied: boolean;
+    missingRequiredExtensions: string[];
 };
 export type XWorkmateArtifactPrepare = {
     runId: string;
@@ -67,6 +69,7 @@ export declare function collectAndSnapshotXWorkmateArtifacts(input: ExportInput)
 export declare function exportXWorkmateArtifacts(input: ExportInput): Promise<XWorkmateArtifactExport>;
 export declare function readXWorkmateArtifact(input: ReadInput): Promise<XWorkmateArtifactExport>;
 export declare function normalizeExpectedArtifactDirs(value: unknown): string[];
+export declare function normalizeRequiredExtensions(value: unknown): string[];
 export declare function formatArtifactManifestMarkdown(input: {
     remoteWorkingDirectory: string;
     artifactScope?: string;

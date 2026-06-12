@@ -46,6 +46,8 @@ export type XWorkmateArtifactExport = {
   warnings: string[];
   expectedArtifactDirs: string[];
   expectedArtifactDirStatus: XWorkmateExpectedArtifactDirStatus[];
+  constraintSatisfied: boolean;
+  missingRequiredExtensions: string[];
 };
 
 export type XWorkmateArtifactPrepare = {
@@ -234,6 +236,7 @@ export async function exportXWorkmateArtifacts(input: ExportInput): Promise<XWor
   );
   const sinceUnixMs = nonNegativeNumber(params.sinceUnixMs, 0);
   const includeContent = optionalBoolean(params.includeContent, true);
+  const requiredArtifactExtensions = normalizeRequiredExtensions(params.requiredArtifactExtensions);
   const workspaceDir = resolveWorkspaceDir({
     config: input.config,
     pluginConfig,
@@ -301,6 +304,11 @@ export async function exportXWorkmateArtifacts(input: ExportInput): Promise<XWor
   }
 
   candidates.sort((left, right) => {
+    const leftRequiredMatch = matchesRequiredExtension(left.relativePath, requiredArtifactExtensions) ? 1 : 0;
+    const rightRequiredMatch = matchesRequiredExtension(right.relativePath, requiredArtifactExtensions) ? 1 : 0;
+    if (rightRequiredMatch !== leftRequiredMatch) {
+      return rightRequiredMatch - leftRequiredMatch;
+    }
     if (right.mtimeMs !== left.mtimeMs) {
       return right.mtimeMs - left.mtimeMs;
     }
@@ -351,6 +359,7 @@ export async function exportXWorkmateArtifacts(input: ExportInput): Promise<XWor
     }
     artifacts.push(artifact);
   }
+  const missingRequiredExtensions = missingRequiredArtifactExtensions(artifacts, requiredArtifactExtensions);
 
   const result = {
     runId,
@@ -363,6 +372,8 @@ export async function exportXWorkmateArtifacts(input: ExportInput): Promise<XWor
     warnings,
     expectedArtifactDirs: expectedDirs,
     expectedArtifactDirStatus: await expectedArtifactDirStatuses(workspaceRoot, expectedDirs),
+    constraintSatisfied: missingRequiredExtensions.length === 0,
+    missingRequiredExtensions,
   };
   return result;
 }
@@ -474,6 +485,8 @@ export async function readXWorkmateArtifact(input: ReadInput): Promise<XWorkmate
     warnings,
     expectedArtifactDirs: [],
     expectedArtifactDirStatus: [],
+    constraintSatisfied: true,
+    missingRequiredExtensions: [],
   };
   return result;
 }
@@ -494,6 +507,48 @@ export function normalizeExpectedArtifactDirs(value: unknown): string[] {
     result.push(withSlash);
   }
   return result;
+}
+
+export function normalizeRequiredExtensions(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const entry of value) {
+    const normalized = optionalString(entry)
+      .toLowerCase()
+      .replace(/^\.+/u, "");
+    if (!normalized || normalized.includes("/") || normalized.includes("\\") || normalized.includes("\0")) {
+      continue;
+    }
+    if (seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function matchesRequiredExtension(relativePath: string, requiredExtensions: string[]): boolean {
+  if (requiredExtensions.length === 0) {
+    return false;
+  }
+  const lowerPath = relativePath.toLowerCase();
+  return requiredExtensions.some((extension) => lowerPath.endsWith(`.${extension}`));
+}
+
+function missingRequiredArtifactExtensions(
+  artifacts: XWorkmateArtifact[],
+  requiredExtensions: string[],
+): string[] {
+  if (requiredExtensions.length === 0) {
+    return [];
+  }
+  return requiredExtensions.filter(
+    (extension) => !artifacts.some((artifact) => artifact.relativePath.toLowerCase().endsWith(`.${extension}`)),
+  );
 }
 
 async function expectedArtifactDirStatuses(
