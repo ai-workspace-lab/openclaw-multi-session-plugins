@@ -49,6 +49,7 @@ type XWorkmateArtifactExport = {
   expectedArtifactDirStatus: XWorkmateExpectedArtifactDirStatus[];
   constraintSatisfied: boolean;
   missingRequiredExtensions: string[];
+  missingRequiredFileCounts: Record<string, { expected: number; actual: number }>;
 };
 
 type XWorkmateArtifactPrepare = {
@@ -238,6 +239,7 @@ export async function exportXWorkmateArtifacts(input: ExportInput): Promise<XWor
   const sinceUnixMs = nonNegativeNumber(params.sinceUnixMs, 0);
   const includeContent = optionalBoolean(params.includeContent, true);
   const requiredArtifactExtensions = normalizeRequiredExtensions(params.requiredArtifactExtensions);
+  const expectedFileCountByExtension = normalizeExpectedFileCountByExtension(params.expectedFileCountByExtension);
   const workspaceDir = resolveWorkspaceDir({
     config: input.config,
     pluginConfig,
@@ -361,6 +363,7 @@ export async function exportXWorkmateArtifacts(input: ExportInput): Promise<XWor
     artifacts.push(artifact);
   }
   const missingRequiredExtensions = missingRequiredArtifactExtensions(artifacts, requiredArtifactExtensions);
+  const missingRequiredFileCounts = missingRequiredArtifactFileCounts(artifacts, expectedFileCountByExtension);
 
   const result = {
     runId,
@@ -373,8 +376,9 @@ export async function exportXWorkmateArtifacts(input: ExportInput): Promise<XWor
     warnings,
     expectedArtifactDirs: expectedDirs,
     expectedArtifactDirStatus: await expectedArtifactDirStatuses(workspaceRoot, expectedDirs),
-    constraintSatisfied: missingRequiredExtensions.length === 0,
+    constraintSatisfied: missingRequiredExtensions.length === 0 && Object.keys(missingRequiredFileCounts).length === 0,
     missingRequiredExtensions,
+    missingRequiredFileCounts,
   };
   return result;
 }
@@ -488,6 +492,7 @@ export async function readXWorkmateArtifact(input: ReadInput): Promise<XWorkmate
     expectedArtifactDirStatus: [],
     constraintSatisfied: true,
     missingRequiredExtensions: [],
+    missingRequiredFileCounts: {},
   };
   return result;
 }
@@ -532,6 +537,42 @@ function missingRequiredArtifactExtensions(
   return requiredExtensions.filter(
     (extension) => !artifacts.some((artifact) => artifact.relativePath.toLowerCase().endsWith(`.${extension}`)),
   );
+}
+
+function normalizeExpectedFileCountByExtension(value: unknown): Record<string, number> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const result: Record<string, number> = {};
+  for (const [rawExtension, rawCount] of Object.entries(value as Record<string, unknown>)) {
+    const extension = rawExtension
+      .toLowerCase()
+      .trim()
+      .replace(/^\.+/u, "");
+    if (!extension || extension.includes("/") || extension.includes("\\") || extension.includes("\0")) {
+      continue;
+    }
+    const count = typeof rawCount === "number" ? rawCount : Number.parseInt(optionalString(rawCount), 10);
+    if (!Number.isFinite(count) || count <= 0) {
+      continue;
+    }
+    result[extension] = Math.floor(count);
+  }
+  return result;
+}
+
+function missingRequiredArtifactFileCounts(
+  artifacts: XWorkmateArtifact[],
+  expectedFileCountByExtension: Record<string, number>,
+): Record<string, { expected: number; actual: number }> {
+  const missing: Record<string, { expected: number; actual: number }> = {};
+  for (const [extension, expected] of Object.entries(expectedFileCountByExtension)) {
+    const actual = artifacts.filter((artifact) => artifact.relativePath.toLowerCase().endsWith(`.${extension}`)).length;
+    if (actual < expected) {
+      missing[extension] = { expected, actual };
+    }
+  }
+  return missing;
 }
 
 async function expectedArtifactDirStatuses(

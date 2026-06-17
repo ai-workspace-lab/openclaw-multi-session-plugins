@@ -177,6 +177,30 @@ describe("exportXWorkmateArtifacts", () => {
     expect(result.missingRequiredExtensions).toEqual(["pdf"]);
   });
 
+  it("reports missing required artifact file counts", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
+    const prepared = await prepareXWorkmateArtifacts({
+      params: { openclawSessionKey: "thread-main", runId: "run-missing-count" },
+      pluginConfig: { workspaceDir: root },
+    });
+    await fs.mkdir(path.join(prepared.artifactDirectory, "assets", "images"), { recursive: true });
+    await fs.writeFile(path.join(prepared.artifactDirectory, "assets", "images", "001.png"), "png");
+
+    const result = await exportXWorkmateArtifacts({
+      params: {
+        openclawSessionKey: "thread-main",
+        runId: "run-missing-count",
+        requiredArtifactExtensions: ["png"],
+        expectedFileCountByExtension: { png: 7 },
+      },
+      pluginConfig: { workspaceDir: root },
+    });
+
+    expect(result.constraintSatisfied).toBe(false);
+    expect(result.missingRequiredExtensions).toEqual([]);
+    expect(result.missingRequiredFileCounts).toEqual({ png: { expected: 7, actual: 1 } });
+  });
+
   it("treats an empty required artifact extension list as satisfied", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-multi-session-plugins-"));
     const prepared = await prepareXWorkmateArtifacts({
