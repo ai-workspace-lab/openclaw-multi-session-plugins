@@ -131,6 +131,7 @@ export async function exportXWorkmateArtifacts(input) {
     const sinceUnixMs = nonNegativeNumber(params.sinceUnixMs, 0);
     const includeContent = optionalBoolean(params.includeContent, true);
     const requiredArtifactExtensions = normalizeRequiredExtensions(params.requiredArtifactExtensions);
+    const expectedFileCountByExtension = normalizeExpectedFileCountByExtension(params.expectedFileCountByExtension);
     const workspaceDir = resolveWorkspaceDir({
         config: input.config,
         pluginConfig,
@@ -248,6 +249,7 @@ export async function exportXWorkmateArtifacts(input) {
         artifacts.push(artifact);
     }
     const missingRequiredExtensions = missingRequiredArtifactExtensions(artifacts, requiredArtifactExtensions);
+    const missingRequiredFileCounts = missingRequiredArtifactFileCounts(artifacts, expectedFileCountByExtension);
     const result = {
         runId,
         sessionKey,
@@ -259,8 +261,9 @@ export async function exportXWorkmateArtifacts(input) {
         warnings,
         expectedArtifactDirs: expectedDirs,
         expectedArtifactDirStatus: await expectedArtifactDirStatuses(workspaceRoot, expectedDirs),
-        constraintSatisfied: missingRequiredExtensions.length === 0,
+        constraintSatisfied: missingRequiredExtensions.length === 0 && Object.keys(missingRequiredFileCounts).length === 0,
         missingRequiredExtensions,
+        missingRequiredFileCounts,
     };
     return result;
 }
@@ -367,6 +370,7 @@ export async function readXWorkmateArtifact(input) {
         expectedArtifactDirStatus: [],
         constraintSatisfied: true,
         missingRequiredExtensions: [],
+        missingRequiredFileCounts: {},
     };
     return result;
 }
@@ -403,6 +407,37 @@ function missingRequiredArtifactExtensions(artifacts, requiredExtensions) {
         return [];
     }
     return requiredExtensions.filter((extension) => !artifacts.some((artifact) => artifact.relativePath.toLowerCase().endsWith(`.${extension}`)));
+}
+function normalizeExpectedFileCountByExtension(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return {};
+    }
+    const result = {};
+    for (const [rawExtension, rawCount] of Object.entries(value)) {
+        const extension = rawExtension
+            .toLowerCase()
+            .trim()
+            .replace(/^\.+/u, "");
+        if (!extension || extension.includes("/") || extension.includes("\\") || extension.includes("\0")) {
+            continue;
+        }
+        const count = typeof rawCount === "number" ? rawCount : Number.parseInt(optionalString(rawCount), 10);
+        if (!Number.isFinite(count) || count <= 0) {
+            continue;
+        }
+        result[extension] = Math.floor(count);
+    }
+    return result;
+}
+function missingRequiredArtifactFileCounts(artifacts, expectedFileCountByExtension) {
+    const missing = {};
+    for (const [extension, expected] of Object.entries(expectedFileCountByExtension)) {
+        const actual = artifacts.filter((artifact) => artifact.relativePath.toLowerCase().endsWith(`.${extension}`)).length;
+        if (actual < expected) {
+            missing[extension] = { expected, actual };
+        }
+    }
+    return missing;
 }
 async function expectedArtifactDirStatuses(workspaceRoot, expectedArtifactDirs) {
     const statuses = [];

@@ -1,9 +1,8 @@
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 declare const plugin: {
     id: string;
     name: string;
     description: string;
-    register: typeof register;
-};
+    configSchema: import("openclaw/plugin-sdk/core").OpenClawPluginConfigSchema;
+    register: NonNullable<import("openclaw/plugin-sdk/core").OpenClawPluginDefinition["register"]>;
+} & Pick<import("openclaw/plugin-sdk/core").OpenClawPluginDefinition, "kind" | "reload" | "nodeHostCommands" | "securityAuditCollectors">;
 export default plugin;
-declare function register(api: OpenClawPluginApi): void;

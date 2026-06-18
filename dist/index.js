@@ -1,3 +1,4 @@
+import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { getPluginRuntimeGatewayRequestScope } from "openclaw/plugin-sdk/plugin-runtime";
 import { collectAndSnapshotXWorkmateArtifacts, exportXWorkmateArtifacts, prepareXWorkmateArtifacts, readXWorkmateArtifact, formatArtifactManifestMarkdown, } from "./src/exportArtifacts.js";
 import { getXWorkmateTaskSnapshot, recordXWorkmateSessionMapping, registerXWorkmateSessionExtension, } from "./src/taskState.js";
@@ -32,12 +33,12 @@ function resolveRunScope(ctx) {
 function stringParam(value) {
     return typeof value === "string" ? value.trim() : "";
 }
-const plugin = {
+const plugin = definePluginEntry({
     id: "openclaw-multi-session-plugins",
     name: "openclaw-multi-session-plugins",
     description: "OpenClaw logical isolation support for multi-session plugin runtimes and scoped XWorkmate artifacts.",
     register,
-};
+});
 export default plugin;
 function register(api) {
     registerXWorkmateSessionExtension(api);

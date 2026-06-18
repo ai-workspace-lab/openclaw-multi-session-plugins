@@ -3,6 +3,7 @@ import type {
   GatewayRequestHandlerOptions,
   OpenClawPluginApi,
 } from "openclaw/plugin-sdk/core";
+import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { getPluginRuntimeGatewayRequestScope } from "openclaw/plugin-sdk/plugin-runtime";
 import {
   collectAndSnapshotXWorkmateArtifacts,
@@ -83,12 +84,12 @@ function stringParam(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-const plugin = {
+const plugin = definePluginEntry({
   id: "openclaw-multi-session-plugins",
   name: "openclaw-multi-session-plugins",
   description: "OpenClaw logical isolation support for multi-session plugin runtimes and scoped XWorkmate artifacts.",
   register,
-};
+});
 
 export default plugin;
 

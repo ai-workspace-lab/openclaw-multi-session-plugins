@@ -24,6 +24,10 @@ type XWorkmateArtifactExport = {
     expectedArtifactDirStatus: XWorkmateExpectedArtifactDirStatus[];
     constraintSatisfied: boolean;
     missingRequiredExtensions: string[];
+    missingRequiredFileCounts: Record<string, {
+        expected: number;
+        actual: number;
+    }>;
 };
 type XWorkmateArtifactPrepare = {
     runId: string;
