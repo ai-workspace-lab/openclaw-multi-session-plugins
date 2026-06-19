@@ -1,0 +1,98 @@
+name: Build OpenClaw Plugin Runtime Release
+
+on:
+  push:
+    branches: [main, release/**]
+    paths:
+      - "**/*.ts"
+      - package.json
+      - pnpm-lock.yaml
+      - openclaw.plugin.json
+      - .github/workflows/runtime-release.yaml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: openclaw-plugin-runtime-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Plugin Assets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run build
+        run: pnpm run build
+
+      - name: Build runtime asset
+        run: |
+          set -euo pipefail
+          root="dist/runtime/openclaw-multi-session-plugins"
+          mkdir -p "${root}" dist/assets
+          
+          # Maintain necessary file structure required by openclaw loader
+          cp -a dist "${root}/"
+          cp openclaw.plugin.json package.json "${root}/"
+          
+          tar -czf "dist/assets/openclaw-multi-session-plugins-runtime-all.tar.gz" \
+            -C dist/runtime openclaw-multi-session-plugins
+          
+          (
+            cd dist/assets
+            sha256sum -- ./*.tar.gz | sed 's# \./# #' > "SHA256SUMS-all"
+          )
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openclaw-plugin-assets
+          path: |
+            dist/assets/*.tar.gz
+            dist/assets/SHA256SUMS-*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: openclaw-plugin-assets
+          path: dist
+          merge-multiple: true
+
+      - name: Publish assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="runtime-${GITHUB_SHA::12}"
+          cat dist/SHA256SUMS-* | sort -u > dist/SHA256SUMS || true
+          rm -f dist/SHA256SUMS-*
+          if gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${tag}" dist/*.tar.gz dist/SHA256SUMS \
+              --repo "${GITHUB_REPOSITORY}" --clobber
+          else
+            gh release create "${tag}" dist/*.tar.gz dist/SHA256SUMS \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${GITHUB_SHA}" \
+              --title "OpenClaw Plugin runtime ${GITHUB_SHA::12}" \
+              --notes "Prebuilt Plugin assets. No target-host build or Nix profile installation required."
+          fi
