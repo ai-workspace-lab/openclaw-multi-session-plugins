@@ -6,7 +6,7 @@ on:
     paths:
       - "**/*.ts"
       - package.json
-      - pnpm-lock.yaml
+      - package-lock.json
       - openclaw.plugin.json
       - .github/workflows/runtime-release.yaml
   workflow_dispatch:
@@ -25,22 +25,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9
-
       - name: Use Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: 'pnpm'
+          cache: 'npm'
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       - name: Run build
-        run: pnpm run build
+        run: npm run build
 
       - name: Build runtime asset
         run: |
