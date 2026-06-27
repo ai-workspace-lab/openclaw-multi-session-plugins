@@ -42,6 +42,7 @@ describe("plugin registration", () => {
         tools.push({ tool, options });
       },
       registerHook: () => undefined,
+      on: () => undefined,
     } as unknown as OpenClawPluginApi;
 
     plugin.register(api);
@@ -73,6 +74,7 @@ describe("plugin registration", () => {
       },
       registerTool: () => undefined,
       registerHook: () => undefined,
+      on: () => undefined,
       runtime: {
         agent: {
           session: {
@@ -139,7 +141,7 @@ describe("plugin registration", () => {
   it("registers xworkmate task state against the native session extension and task runtime seams", async () => {
     const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-task-state-"));
     const methods = new Map<string, GatewayMethodHandler>();
-    const hooks = new Map<string, (event: unknown) => Promise<void>>();
+    const hooks = new Map<string, (event: unknown, ctx?: unknown) => Promise<void>>();
     const sessionExtensions: Array<Record<string, unknown>> = [];
     const sessionExtensionPatches: Array<Record<string, unknown>> = [];
     const detachedRuntimes: Array<Record<string, unknown>> = [];
@@ -197,7 +199,10 @@ describe("plugin registration", () => {
         methods.set(method, handler);
       },
       registerTool: () => undefined,
-      registerHook: (event: string, handler: (payload: unknown) => Promise<void>) => {
+      registerHook: (event: string, handler: (payload: unknown, ctx?: unknown) => Promise<void>) => {
+        hooks.set(event, handler);
+      },
+      on: (event: string, handler: (payload: unknown, ctx?: unknown) => Promise<void>) => {
         hooks.set(event, handler);
       },
 
@@ -257,6 +262,15 @@ describe("plugin registration", () => {
     });
     expect(snapshot.payload?.task).toMatchObject({ taskId: "native-task", status: "running" });
     expect(snapshot.payload?.artifacts).toMatchObject([{ relativePath: "reports/final.md" }]);
+
+    await hooks.get("agent_end")?.(
+      { runId: "turn-1", success: false, error: "401 authentication failed" },
+      { sessionKey: "draft:1780636411666238-3", runId: "turn-1" },
+    );
+    expect(sessionExtensionPatches.at(-1)).toMatchObject({
+      sessionKey: "draft:1780636411666238-3",
+      preserveActivity: true,
+    });
   });
 
   it("does not invent default session or run ids for the optional agent tool", async () => {
@@ -266,6 +280,7 @@ describe("plugin registration", () => {
       pluginConfig: { workspaceDir: path.join(os.tmpdir(), "openclaw-multi-session-tool-test") },
       registerGatewayMethod: () => undefined,
       registerHook: () => undefined,
+      on: () => undefined,
       registerTool: (tool: unknown, options: unknown) => {
         tools.push({ tool, options });
       },
@@ -295,6 +310,7 @@ describe("plugin registration", () => {
       pluginConfig: {},
       registerGatewayMethod: () => undefined,
       registerHook: () => undefined,
+      on: () => undefined,
       registerTool: (tool: unknown, options: { names?: string[] }) => {
         tools.push({ tool, options });
       },
@@ -325,6 +341,7 @@ describe("plugin registration", () => {
       pluginConfig: {},
       registerGatewayMethod: () => undefined,
       registerHook: () => undefined,
+      on: () => undefined,
       registerTool: (tool: unknown, options: unknown) => {
         tools.push({ tool, options });
       },

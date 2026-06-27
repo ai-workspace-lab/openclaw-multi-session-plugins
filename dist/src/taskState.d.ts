@@ -1,5 +1,6 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 export declare const XWORKMATE_SESSION_EXTENSION_NAMESPACE = "xworkmate.sessionMapping";
+export declare const XWORKMATE_TASK_RUNS_EXTENSION_NAMESPACE = "xworkmate.taskRuns";
 export type XWorkmateTaskMetadataV1 = {
     schemaVersion: 1;
     appThreadKey: string;
@@ -27,6 +28,16 @@ export type XWorkmateTaskLookupError = {
     mapping?: XWorkmateSessionMappingV1;
     expectedArtifactDirs?: string[];
 };
+export type XWorkmateRecordedTaskRunV1 = {
+    schemaVersion: 1;
+    runId: string;
+    status: "running" | "completed" | "failed";
+    success: boolean;
+    startedAt: string;
+    updatedAt: string;
+    completedAt?: string;
+    error?: string;
+};
 export declare function registerXWorkmateSessionExtension(api: OpenClawPluginApi): void;
 export declare function recordXWorkmateSessionMapping(input: {
     api: OpenClawPluginApi;
@@ -34,6 +45,18 @@ export declare function recordXWorkmateSessionMapping(input: {
     artifactScope?: string;
     source?: XWorkmateSessionMappingSource;
 }): Promise<XWorkmateSessionMappingV1>;
+export declare function recordXWorkmateTaskRunStarted(input: {
+    api: OpenClawPluginApi;
+    openclawSessionKey: string;
+    runId: string;
+}): Promise<XWorkmateRecordedTaskRunV1>;
+export declare function recordXWorkmateTaskRunTerminal(input: {
+    api: OpenClawPluginApi;
+    openclawSessionKey: string;
+    runId: string;
+    success: boolean;
+    error?: unknown;
+}): Promise<XWorkmateRecordedTaskRunV1>;
 export declare function getXWorkmateTaskSnapshot(input: {
     api: OpenClawPluginApi;
     params: Record<string, unknown>;

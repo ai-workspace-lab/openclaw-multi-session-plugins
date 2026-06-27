@@ -4,6 +4,8 @@ import { normalizeExpectedArtifactDirs } from "./expectedArtifactDirs.js";
 
 const XWORKMATE_PLUGIN_ID = "openclaw-multi-session-plugins";
 export const XWORKMATE_SESSION_EXTENSION_NAMESPACE = "xworkmate.sessionMapping";
+export const XWORKMATE_TASK_RUNS_EXTENSION_NAMESPACE = "xworkmate.taskRuns";
+const MAX_RECORDED_TASK_RUNS = 32;
 
 export type XWorkmateTaskMetadataV1 = {
   schemaVersion: 1;
@@ -42,6 +44,17 @@ export type XWorkmateTaskLookupError = {
   message: string;
   mapping?: XWorkmateSessionMappingV1;
   expectedArtifactDirs?: string[];
+};
+
+export type XWorkmateRecordedTaskRunV1 = {
+  schemaVersion: 1;
+  runId: string;
+  status: "running" | "completed" | "failed";
+  success: boolean;
+  startedAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  error?: string;
 };
 
 type SessionEntry = Record<string, unknown> & {
@@ -99,6 +112,41 @@ export async function recordXWorkmateSessionMapping(input: {
     },
     openclawSessionKey,
     source: input.source ?? "bridge_prepare",
+  });
+}
+
+export async function recordXWorkmateTaskRunStarted(input: {
+  api: OpenClawPluginApi;
+  openclawSessionKey: string;
+  runId: string;
+}): Promise<XWorkmateRecordedTaskRunV1> {
+  const now = new Date().toISOString();
+  return upsertXWorkmateTaskRun(input.api, {
+    openclawSessionKey: requiredString(input.openclawSessionKey, "openclawSessionKey required"),
+    runId: requiredString(input.runId, "runId required"),
+    status: "running",
+    success: false,
+    startedAt: now,
+    updatedAt: now,
+  });
+}
+
+export async function recordXWorkmateTaskRunTerminal(input: {
+  api: OpenClawPluginApi;
+  openclawSessionKey: string;
+  runId: string;
+  success: boolean;
+  error?: unknown;
+}): Promise<XWorkmateRecordedTaskRunV1> {
+  const now = new Date().toISOString();
+  return upsertXWorkmateTaskRun(input.api, {
+    openclawSessionKey: requiredString(input.openclawSessionKey, "openclawSessionKey required"),
+    runId: requiredString(input.runId, "runId required"),
+    status: input.success ? "completed" : "failed",
+    success: input.success,
+    updatedAt: now,
+    completedAt: now,
+    error: sanitizeTaskRunError(input.error),
   });
 }
 
@@ -233,9 +281,50 @@ export async function getXWorkmateTaskSnapshot(input: {
   });
   const includeArtifacts = params.includeArtifacts !== false;
   if (!task) {
+    const recordedRun = runId
+      ? readXWorkmateTaskRun(input.api, openclawSessionKey, runId)
+      : undefined;
     const exported = includeArtifacts && runId
       ? await exportArtifactsForTaskLookup(input, params, openclawSessionKey, runId, mapping)
       : undefined;
+    if (recordedRun) {
+      return {
+        success: recordedRun.status === "running" ? true : recordedRun.success,
+        status: recordedRun.status,
+        taskStatus: recordedRun.status,
+        terminal: recordedRun.status !== "running",
+        terminalSource: "agent_end",
+        mode: "gateway-chat",
+        mapping,
+        appThreadKey: mapping?.appThreadKey ?? appThreadKey,
+        openclawSessionKey,
+        runId,
+        taskId: taskId || runId,
+        task: {
+          taskId: taskId || runId,
+          runId,
+          status: recordedRun.status,
+          success: recordedRun.success,
+          source: "xworkmate_run_state",
+          startedAt: recordedRun.startedAt,
+          updatedAt: recordedRun.updatedAt,
+          completedAt: recordedRun.completedAt,
+          error: recordedRun.error,
+        },
+        error: recordedRun.error,
+        message: recordedRun.error,
+        expectedArtifactDirs: mapping?.expectedArtifactDirs ?? [],
+        artifactScope: exported?.artifactScope,
+        remoteWorkingDirectory: exported?.remoteWorkingDirectory,
+        remoteWorkspaceRefKind: exported?.remoteWorkspaceRefKind,
+        scopeKind: exported?.scopeKind,
+        artifacts: exported?.artifacts ?? [],
+        constraintSatisfied: exported?.constraintSatisfied,
+        missingRequiredExtensions: exported?.missingRequiredExtensions,
+        warnings: exported?.warnings ?? [],
+        artifactCount: exported?.artifacts.length ?? 0,
+      };
+    }
     if (exported?.artifacts.length) {
       return {
         success: false,
@@ -306,6 +395,113 @@ export async function getXWorkmateTaskSnapshot(input: {
     warnings: exported?.warnings ?? [],
     artifactCount: exported?.artifacts.length ?? 0,
   };
+}
+
+async function upsertXWorkmateTaskRun(
+  api: OpenClawPluginApi,
+  input: Omit<XWorkmateRecordedTaskRunV1, "schemaVersion" | "startedAt"> & {
+    openclawSessionKey: string;
+    startedAt?: string;
+  },
+): Promise<XWorkmateRecordedTaskRunV1> {
+  const patchSessionEntry = resolvePatchSessionEntry(api);
+  if (!patchSessionEntry) {
+    throw new Error("OpenClaw runtime session patch API is unavailable");
+  }
+  let recorded: XWorkmateRecordedTaskRunV1 | undefined;
+  await patchSessionEntry({
+    sessionKey: input.openclawSessionKey,
+    fallbackEntry: {
+      sessionId: input.openclawSessionKey,
+      updatedAt: Date.now(),
+    },
+    preserveActivity: true,
+    update: (entry) => {
+      const runs = readTaskRunsFromEntry(entry);
+      const existing = runs[input.runId];
+      recorded = compactObject({
+        schemaVersion: 1 as const,
+        runId: input.runId,
+        status: input.status,
+        success: input.success,
+        startedAt: existing?.startedAt ?? input.startedAt ?? input.updatedAt,
+        updatedAt: input.updatedAt,
+        completedAt: input.completedAt,
+        error: input.error,
+      }) as XWorkmateRecordedTaskRunV1;
+      runs[input.runId] = recorded;
+      const boundedRuns = Object.fromEntries(
+        Object.entries(runs)
+          .sort((left, right) => right[1].updatedAt.localeCompare(left[1].updatedAt))
+          .slice(0, MAX_RECORDED_TASK_RUNS),
+      );
+      return {
+        pluginExtensions: {
+          ...(entry.pluginExtensions ?? {}),
+          [XWORKMATE_PLUGIN_ID]: {
+            ...(entry.pluginExtensions?.[XWORKMATE_PLUGIN_ID] ?? {}),
+            [XWORKMATE_TASK_RUNS_EXTENSION_NAMESPACE]: {
+              schemaVersion: 1,
+              runs: boundedRuns,
+            },
+          },
+        },
+      };
+    },
+  });
+  if (!recorded) {
+    throw new Error("failed to write xworkmate task run state");
+  }
+  return recorded;
+}
+
+function readXWorkmateTaskRun(
+  api: OpenClawPluginApi,
+  openclawSessionKey: string,
+  runId: string,
+): XWorkmateRecordedTaskRunV1 | undefined {
+  const entry = resolveGetSessionEntry(api)?.({ sessionKey: openclawSessionKey });
+  return readTaskRunsFromEntry(entry)[runId];
+}
+
+function readTaskRunsFromEntry(entry: SessionEntry | undefined | null): Record<string, XWorkmateRecordedTaskRunV1> {
+  const pluginState = asRecord(entry?.pluginExtensions?.[XWORKMATE_PLUGIN_ID]);
+  const store = asRecord(pluginState?.[XWORKMATE_TASK_RUNS_EXTENSION_NAMESPACE]);
+  if (store?.schemaVersion !== 1) {
+    return {};
+  }
+  const runs = asRecord(store.runs) ?? {};
+  const result: Record<string, XWorkmateRecordedTaskRunV1> = {};
+  for (const [key, rawValue] of Object.entries(runs)) {
+    const raw = asRecord(rawValue);
+    const runId = optionalString(raw?.runId) || key;
+    const status = optionalString(raw?.status);
+    if (!runId || (status !== "running" && status !== "completed" && status !== "failed")) {
+      continue;
+    }
+    result[runId] = compactObject({
+      schemaVersion: 1 as const,
+      runId,
+      status,
+      success: raw?.success === true,
+      startedAt: optionalString(raw?.startedAt) || new Date(0).toISOString(),
+      updatedAt: optionalString(raw?.updatedAt) || new Date(0).toISOString(),
+      completedAt: optionalString(raw?.completedAt),
+      error: optionalString(raw?.error),
+    }) as XWorkmateRecordedTaskRunV1;
+  }
+  return result;
+}
+
+function sanitizeTaskRunError(value: unknown): string | undefined {
+  const raw = optionalString(value);
+  if (!raw) {
+    return undefined;
+  }
+  return raw
+    .replace(/\b(sk|nvapi)-[A-Za-z0-9._-]+\b/gi, "$1-<redacted>")
+    .replace(/(api[_ -]?key\s*[:=]\s*)[^\s,;]+/gi, "$1<redacted>")
+    .slice(0, 2048);
 }
 
 async function exportArtifactsForTaskLookup(

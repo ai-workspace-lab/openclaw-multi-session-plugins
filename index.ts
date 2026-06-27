@@ -15,6 +15,8 @@ import {
 import {
   getXWorkmateTaskSnapshot,
   recordXWorkmateSessionMapping,
+  recordXWorkmateTaskRunStarted,
+  recordXWorkmateTaskRunTerminal,
   registerXWorkmateSessionExtension,
 } from "./src/taskState.js";
 
@@ -123,6 +125,28 @@ function register(api: OpenClawPluginApi) {
     { name: "openclaw-multi-session-plugins.session-start" },
   );
 
+  api.on(
+    "agent_end",
+    async (event: any, ctx: any) => {
+      try {
+        const openclawSessionKey = stringParam(ctx?.sessionKey ?? event?.sessionKey);
+        const runId = stringParam(event?.runId ?? ctx?.runId);
+        if (!openclawSessionKey || !runId) {
+          return;
+        }
+        await recordXWorkmateTaskRunTerminal({
+          api,
+          openclawSessionKey,
+          runId,
+          success: event?.success === true,
+          error: event?.error,
+        });
+      } catch (error) {
+        api.logger?.warn?.(`xworkmate agent_end state capture failed: ${String(error)}`);
+      }
+    },
+  );
+
   api.registerGatewayMethod("xworkmate.session.prepare", async (opts: GatewayRequestHandlerOptions) => {
     try {
       const params = scopedGatewayParams(opts.params);
@@ -139,6 +163,11 @@ function register(api: OpenClawPluginApi) {
         },
         config: api.config,
         pluginConfig: api.pluginConfig,
+      });
+      await recordXWorkmateTaskRunStarted({
+        api,
+        openclawSessionKey: mapping.openclawSessionKey,
+        runId: stringParam(params.runId),
       });
       opts.respond(
         true,

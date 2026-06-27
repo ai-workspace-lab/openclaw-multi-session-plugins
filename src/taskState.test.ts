@@ -6,6 +6,8 @@ import {
   XWORKMATE_SESSION_EXTENSION_NAMESPACE,
   getXWorkmateTaskSnapshot,
   recordXWorkmateSessionMapping,
+  recordXWorkmateTaskRunStarted,
+  recordXWorkmateTaskRunTerminal,
 } from "./taskState.js";
 
 const XWORKMATE_PLUGIN_ID = "openclaw-multi-session-plugins";
@@ -248,6 +250,90 @@ describe("xworkmate task state mapping", () => {
       mapping: {
         appThreadKey: "draft:no-task",
         openclawSessionKey: "draft:no-task",
+      },
+    });
+  });
+
+  it("returns a durable failed agent terminal state when the native task record is absent", async () => {
+    const workspaceDir = await createWorkspaceFixture();
+    const { api } = createApiFixture({}, { workspaceDir });
+    await recordXWorkmateSessionMapping({
+      api,
+      params: {
+        appThreadKey: "draft:failed-run",
+        openclawSessionKey: "agent:main:draft:failed-run",
+        runId: "turn-failed",
+      },
+    });
+    await recordXWorkmateTaskRunStarted({
+      api,
+      openclawSessionKey: "agent:main:draft:failed-run",
+      runId: "turn-failed",
+    });
+    await recordXWorkmateTaskRunTerminal({
+      api,
+      openclawSessionKey: "agent:main:draft:failed-run",
+      runId: "turn-failed",
+      success: false,
+      error: "401 Authentication Fails, api_key=sk-secret-value",
+    });
+
+    await expect(
+      getXWorkmateTaskSnapshot({
+        api,
+        params: {
+          appThreadKey: "draft:failed-run",
+          runId: "turn-failed",
+        },
+      }),
+    ).resolves.toMatchObject({
+      success: false,
+      status: "failed",
+      taskStatus: "failed",
+      terminal: true,
+      terminalSource: "agent_end",
+      task: {
+        runId: "turn-failed",
+        status: "failed",
+        source: "xworkmate_run_state",
+      },
+      error: "401 Authentication Fails, api_key=<redacted>",
+    });
+  });
+
+  it("returns a recorded running state while the agent turn is still active", async () => {
+    const { api } = createApiFixture();
+    await recordXWorkmateSessionMapping({
+      api,
+      params: {
+        appThreadKey: "draft:running-run",
+        openclawSessionKey: "agent:main:draft:running-run",
+        runId: "turn-running",
+      },
+    });
+    await recordXWorkmateTaskRunStarted({
+      api,
+      openclawSessionKey: "agent:main:draft:running-run",
+      runId: "turn-running",
+    });
+
+    await expect(
+      getXWorkmateTaskSnapshot({
+        api,
+        params: {
+          appThreadKey: "draft:running-run",
+          runId: "turn-running",
+          includeArtifacts: false,
+        },
+      }),
+    ).resolves.toMatchObject({
+      success: true,
+      status: "running",
+      terminal: false,
+      task: {
+        runId: "turn-running",
+        status: "running",
+        source: "xworkmate_run_state",
       },
     });
   });
