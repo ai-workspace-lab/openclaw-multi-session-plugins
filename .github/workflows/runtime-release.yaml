@@ -41,10 +41,10 @@ jobs:
         run: |
           set -euo pipefail
           root="dist/runtime/openclaw-multi-session-plugins"
-          mkdir -p "${root}" dist/assets
+          mkdir -p "${root}/dist" dist/assets
           
           # Maintain necessary file structure required by openclaw loader
-          cp -a dist "${root}/"
+          cp -a dist/index.js dist/index.d.ts dist/src "${root}/dist/"
           cp openclaw.plugin.json package.json "${root}/"
           
           tar -czf "dist/assets/openclaw-multi-session-plugins-runtime-all.tar.gz" \
