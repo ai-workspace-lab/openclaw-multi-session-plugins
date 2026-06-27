@@ -78,16 +78,30 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="runtime-${GITHUB_SHA::12}"
           cat dist/SHA256SUMS-* | sort -u > dist/SHA256SUMS || true
           rm -f dist/SHA256SUMS-*
-          if gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release upload "${tag}" dist/*.tar.gz dist/SHA256SUMS \
-              --repo "${GITHUB_REPOSITORY}" --clobber
-          else
-            gh release create "${tag}" dist/*.tar.gz dist/SHA256SUMS \
-              --repo "${GITHUB_REPOSITORY}" \
-              --target "${GITHUB_SHA}" \
-              --title "OpenClaw Plugin runtime ${GITHUB_SHA::12}" \
-              --notes "Prebuilt Plugin assets. No target-host build or Nix profile installation required."
-          fi
+
+          # Publish (or refresh) a release with the runtime tarball + checksums.
+          # --latest=false keeps GitHub's "Latest release" pointer free for the
+          # human-facing v* tags; deployments pull via explicit tag URLs instead.
+          publish_release() {
+            local tag="$1" title="$2"
+            if gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+              gh release upload "${tag}" dist/*.tar.gz dist/SHA256SUMS \
+                --repo "${GITHUB_REPOSITORY}" --clobber
+            else
+              gh release create "${tag}" dist/*.tar.gz dist/SHA256SUMS \
+                --repo "${GITHUB_REPOSITORY}" \
+                --target "${GITHUB_SHA}" \
+                --latest=false \
+                --title "${title}" \
+                --notes "Prebuilt Plugin assets. No target-host build or Nix profile installation required."
+            fi
+          }
+
+          # Immutable per-commit release for traceability.
+          publish_release "runtime-${GITHUB_SHA::12}" "OpenClaw Plugin runtime ${GITHUB_SHA::12}"
+          # Stable moving release so deployments resolve a deterministic URL
+          # (releases/download/runtime-latest/...) instead of the mutable
+          # /releases/latest/ pointer, which collides with other release tracks.
+          publish_release "runtime-latest" "OpenClaw Plugin runtime (latest)"
