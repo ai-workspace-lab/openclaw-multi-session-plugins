@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { describe, expect, it } from "vitest";
-import plugin from "./index.js";
+import plugin, { lastAssistantText } from "./index.js";
 import { prepareXWorkmateArtifacts } from "./src/exportArtifacts.js";
 
 type GatewayMethodHandler = Parameters<OpenClawPluginApi["registerGatewayMethod"]>[1];
@@ -14,6 +14,12 @@ type GatewayMethodResponse = {
 };
 
 describe("plugin registration", () => {
+  it("extracts only the final assistant display text", () => {
+    expect(lastAssistantText([
+      { role: "user", content: "secret prompt" },
+      { role: "assistant", content: [{ type: "tool_call", text: "ignored" }, { type: "text", text: "完成并已保存。" }] },
+    ])).toBe("完成并已保存。");
+  });
   it("declares registered agent tools in the manifest contract", () => {
     const manifest = JSON.parse(fs.readFileSync("openclaw.plugin.json", "utf8")) as {
       contracts?: { tools?: string[]; sessionScopedTools?: string[] };
@@ -264,7 +270,7 @@ describe("plugin registration", () => {
     expect(snapshot.payload?.artifacts).toMatchObject([{ relativePath: "reports/final.md" }]);
 
     await hooks.get("agent_end")?.(
-      { runId: "turn-1", success: false, error: "401 authentication failed" },
+      { runId: "turn-1", success: false, error: "401 authentication failed", messages: [{ role: "assistant", content: [{ type: "text", text: "上游认证失败。" }] }] },
       { sessionKey: "draft:1780636411666238-3", runId: "turn-1" },
     );
     expect(sessionExtensionPatches.at(-1)).toMatchObject({

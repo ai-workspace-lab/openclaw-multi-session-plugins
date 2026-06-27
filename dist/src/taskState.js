@@ -51,6 +51,7 @@ export async function recordXWorkmateTaskRunTerminal(input) {
         success: input.success,
         updatedAt: now,
         completedAt: now,
+        output: sanitizeTaskRunOutput(input.output),
         error: sanitizeTaskRunError(input.error),
     });
 }
@@ -194,8 +195,10 @@ export async function getXWorkmateTaskSnapshot(input) {
                     completedAt: recordedRun.completedAt,
                     error: recordedRun.error,
                 },
+                output: recordedRun.output,
+                resultSummary: recordedRun.output,
                 error: recordedRun.error,
-                message: recordedRun.error,
+                message: recordedRun.output ?? recordedRun.error,
                 expectedArtifactDirs: mapping?.expectedArtifactDirs ?? [],
                 artifactScope: exported?.artifactScope,
                 remoteWorkingDirectory: exported?.remoteWorkingDirectory,
@@ -295,6 +298,7 @@ async function upsertXWorkmateTaskRun(api, input) {
                 startedAt: existing?.startedAt ?? input.startedAt ?? input.updatedAt,
                 updatedAt: input.updatedAt,
                 completedAt: input.completedAt,
+                output: input.output,
                 error: input.error,
             });
             runs[input.runId] = recorded;
@@ -347,10 +351,18 @@ function readTaskRunsFromEntry(entry) {
             startedAt: optionalString(raw?.startedAt) || new Date(0).toISOString(),
             updatedAt: optionalString(raw?.updatedAt) || new Date(0).toISOString(),
             completedAt: optionalString(raw?.completedAt),
+            output: optionalString(raw?.output),
             error: optionalString(raw?.error),
         });
     }
     return result;
+}
+function sanitizeTaskRunOutput(value) {
+    const raw = optionalString(value);
+    if (!raw) {
+        return undefined;
+    }
+    return raw.slice(0, 16 * 1024);
 }
 function sanitizeTaskRunError(value) {
     const raw = optionalString(value);

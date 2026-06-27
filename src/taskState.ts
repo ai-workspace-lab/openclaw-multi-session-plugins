@@ -54,6 +54,7 @@ export type XWorkmateRecordedTaskRunV1 = {
   startedAt: string;
   updatedAt: string;
   completedAt?: string;
+  output?: string;
   error?: string;
 };
 
@@ -136,6 +137,7 @@ export async function recordXWorkmateTaskRunTerminal(input: {
   openclawSessionKey: string;
   runId: string;
   success: boolean;
+  output?: unknown;
   error?: unknown;
 }): Promise<XWorkmateRecordedTaskRunV1> {
   const now = new Date().toISOString();
@@ -146,6 +148,7 @@ export async function recordXWorkmateTaskRunTerminal(input: {
     success: input.success,
     updatedAt: now,
     completedAt: now,
+    output: sanitizeTaskRunOutput(input.output),
     error: sanitizeTaskRunError(input.error),
   });
 }
@@ -311,8 +314,10 @@ export async function getXWorkmateTaskSnapshot(input: {
           completedAt: recordedRun.completedAt,
           error: recordedRun.error,
         },
+        output: recordedRun.output,
+        resultSummary: recordedRun.output,
         error: recordedRun.error,
-        message: recordedRun.error,
+        message: recordedRun.output ?? recordedRun.error,
         expectedArtifactDirs: mapping?.expectedArtifactDirs ?? [],
         artifactScope: exported?.artifactScope,
         remoteWorkingDirectory: exported?.remoteWorkingDirectory,
@@ -427,6 +432,7 @@ async function upsertXWorkmateTaskRun(
         startedAt: existing?.startedAt ?? input.startedAt ?? input.updatedAt,
         updatedAt: input.updatedAt,
         completedAt: input.completedAt,
+        output: input.output,
         error: input.error,
       }) as XWorkmateRecordedTaskRunV1;
       runs[input.runId] = recorded;
@@ -487,10 +493,19 @@ function readTaskRunsFromEntry(entry: SessionEntry | undefined | null): Record<s
       startedAt: optionalString(raw?.startedAt) || new Date(0).toISOString(),
       updatedAt: optionalString(raw?.updatedAt) || new Date(0).toISOString(),
       completedAt: optionalString(raw?.completedAt),
+      output: optionalString(raw?.output),
       error: optionalString(raw?.error),
     }) as XWorkmateRecordedTaskRunV1;
   }
   return result;
+}
+
+function sanitizeTaskRunOutput(value: unknown): string | undefined {
+  const raw = optionalString(value);
+  if (!raw) {
+    return undefined;
+  }
+  return raw.slice(0, 16 * 1024);
 }
 
 function sanitizeTaskRunError(value: unknown): string | undefined {

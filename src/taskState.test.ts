@@ -275,6 +275,7 @@ describe("xworkmate task state mapping", () => {
       openclawSessionKey: "agent:main:draft:failed-run",
       runId: "turn-failed",
       success: false,
+      output: "任务执行失败前的说明",
       error: "401 Authentication Fails, api_key=sk-secret-value",
     });
 
@@ -292,6 +293,9 @@ describe("xworkmate task state mapping", () => {
       taskStatus: "failed",
       terminal: true,
       terminalSource: "agent_end",
+      output: "任务执行失败前的说明",
+      resultSummary: "任务执行失败前的说明",
+      message: "任务执行失败前的说明",
       task: {
         runId: "turn-failed",
         status: "failed",

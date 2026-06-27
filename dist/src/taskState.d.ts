@@ -36,6 +36,7 @@ export type XWorkmateRecordedTaskRunV1 = {
     startedAt: string;
     updatedAt: string;
     completedAt?: string;
+    output?: string;
     error?: string;
 };
 export declare function registerXWorkmateSessionExtension(api: OpenClawPluginApi): void;
@@ -55,6 +56,7 @@ export declare function recordXWorkmateTaskRunTerminal(input: {
     openclawSessionKey: string;
     runId: string;
     success: boolean;
+    output?: unknown;
     error?: unknown;
 }): Promise<XWorkmateRecordedTaskRunV1>;
 export declare function getXWorkmateTaskSnapshot(input: {

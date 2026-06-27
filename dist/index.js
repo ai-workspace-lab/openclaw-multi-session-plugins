@@ -33,6 +33,37 @@ function resolveRunScope(ctx) {
 function stringParam(value) {
     return typeof value === "string" ? value.trim() : "";
 }
+export function lastAssistantText(messages) {
+    if (!Array.isArray(messages))
+        return undefined;
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index];
+        if (!message || typeof message !== "object")
+            continue;
+        const record = message;
+        if (stringParam(record.role).toLowerCase() !== "assistant")
+            continue;
+        const content = record.content;
+        if (typeof content === "string" && content.trim())
+            return content.trim();
+        if (!Array.isArray(content))
+            continue;
+        const text = content
+            .map((block) => {
+            if (!block || typeof block !== "object")
+                return "";
+            const item = block;
+            const type = stringParam(item.type).toLowerCase();
+            return type === "text" || type === "output_text" ? stringParam(item.text) : "";
+        })
+            .filter(Boolean)
+            .join("\n")
+            .trim();
+        if (text)
+            return text;
+    }
+    return undefined;
+}
 const plugin = definePluginEntry({
     id: "openclaw-multi-session-plugins",
     name: "openclaw-multi-session-plugins",
@@ -77,6 +108,7 @@ function register(api) {
                 openclawSessionKey,
                 runId,
                 success: event?.success === true,
+                output: lastAssistantText(event?.messages),
                 error: event?.error,
             });
         }

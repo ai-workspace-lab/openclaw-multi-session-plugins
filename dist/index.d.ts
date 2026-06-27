@@ -1,3 +1,4 @@
+export declare function lastAssistantText(messages: unknown): string | undefined;
 declare const plugin: {
     id: string;
     name: string;
