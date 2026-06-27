@@ -330,6 +330,7 @@ describe("xworkmate task state mapping", () => {
       success: true,
       status: "running",
       terminal: false,
+      terminalSource: "session_prepare",
       task: {
         runId: "turn-running",
         status: "running",

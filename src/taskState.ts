@@ -293,7 +293,7 @@ export async function getXWorkmateTaskSnapshot(input: {
         status: recordedRun.status,
         taskStatus: recordedRun.status,
         terminal: recordedRun.status !== "running",
-        terminalSource: "agent_end",
+        terminalSource: recordedRun.status === "running" ? "session_prepare" : "agent_end",
         mode: "gateway-chat",
         mapping,
         appThreadKey: mapping?.appThreadKey ?? appThreadKey,
