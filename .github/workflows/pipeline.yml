@@ -1,25 +1,24 @@
-name: Deploy
+name: Pipeline
 
-env:
-  VAULT_ADDR: https://vault.svc.plus
-
+# 单一流水线，三个串联 stage：build -> publish(npm) -> deploy。
+#   build   : 安装/测试/类型检查/包内容校验（PR 与 push 都跑）。
+#   publish : 发布到 npm（仅 release / 版本 tag / 手动触发；needs build）。
+#   deploy  : SSH 安装到 ubuntu@openclaw.svc.plus（needs publish）。
 on:
   push:
+    branches:
+      - main
     tags:
       - "[0-9]+.[0-9]+.[0-9]+"
       - "v[0-9]+.[0-9]+.[0-9]+"
+  pull_request:
   release:
     types:
       - published
-  workflow_run:
-    workflows:
-      - Publish
-    types:
-      - completed
   workflow_dispatch:
     inputs:
       version:
-        description: "Plugin version to install (e.g. 2026.6.1). Leave blank to use the release tag."
+        description: "Plugin version to install (e.g. 2026.6.1). Leave blank to use package.json."
         required: false
         default: ""
       force:
@@ -31,27 +30,150 @@ on:
           - "false"
           - "true"
 
+env:
+  VAULT_ADDR: https://vault.svc.plus
+
 concurrency:
-  group: openclaw-deploy
-  cancel-in-progress: false
+  group: pipeline-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
-  install-on-host:
-    name: Update plugin on ubuntu@openclaw.svc.plus
+  # ───────────────────────── Stage 1: build ─────────────────────────
+  build:
+    name: Build
     runs-on: ubuntu-latest
-    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'release')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.28.2 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test
+        run: pnpm test
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Verify npm package contents
+        run: pnpm pack:check
+
+  # ──────────────────────── Stage 2: publish ────────────────────────
+  publish:
+    name: Publish to npm
+    needs: build
+    if: >-
+      github.event_name == 'release' ||
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Load Vault secrets
+        id: vault
+        uses: hashicorp/vault-action@v2
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          role: github-actions-openclaw-multi-session-plugins
+          jwtGithubAudience: vault
+          secrets: |
+            kv/data/github-actions/openclaw-multi-session-plugins NPM_TOKEN | NPM_TOKEN
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org/
+
+      - name: Setup pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.28.2 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve package metadata
+        id: meta
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Verify npm publish access
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ steps.vault.outputs.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          user="$(npm whoami 2>/dev/null || true)"
+          if [ -z "${user}" ]; then
+            echo "::error::NPM_TOKEN is not valid for npm publish. Create an npm automation token for an account that can publish ${name}, then store it in Vault as NPM_TOKEN."
+            exit 1
+          fi
+          if npm view "${name}" name >/dev/null 2>&1; then
+            echo "::notice::Publishing ${name}@${version} as npm user ${user}; package already exists."
+          else
+            echo "::notice::Publishing ${name}@${version} as npm user ${user}; npm will create this public package on first publish."
+          fi
+
+      - name: Check published version
+        id: published
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          if npm view "${name}@${version}" version >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "${name}@${version} is already published; skipping npm publish."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish
+        if: steps.published.outputs.exists != 'true'
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ steps.vault.outputs.NPM_TOKEN }}
+
+  # ───────────────────────── Stage 3: deploy ────────────────────────
+  deploy:
+    name: Update plugin on ubuntu@openclaw.svc.plus
+    needs: publish
+    runs-on: ubuntu-latest
+    concurrency:
+      group: openclaw-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
     env:
       SSH_HOST: ubuntu@openclaw.svc.plus
       PLUGIN_NAME: openclaw-multi-session-plugins
     steps:
       - name: Checkout source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
 
       - name: Load Vault secrets
         id: vault
@@ -69,28 +191,22 @@ jobs:
 
       - name: Resolve target version
         id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          PUBLISH_VERSION: ${{ needs.publish.outputs.version }}
         run: |
           set -euo pipefail
-          if [ -n "${{ inputs.version }}" ]; then
-            value="${{ inputs.version }}"
-          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
-            if [ ! -f package.json ]; then
-              echo "::error::package.json not found after checking out workflow_run source"
-              exit 1
-            fi
-            value="$(node -p "require('./package.json').version")"
+          if [ -n "${INPUT_VERSION}" ]; then
+            value="${INPUT_VERSION}"
+          elif [ -n "${PUBLISH_VERSION}" ]; then
+            value="${PUBLISH_VERSION}"
           else
-            ref="${GITHUB_REF_NAME:-}"
-            value="${ref}"
+            value="$(node -p "require('./package.json').version")"
           fi
           value="${value##*/}"
           value="${value#v}"
           if ! [[ "${value}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::Resolved value '${value}' is not a valid X.Y.Z version"
-            exit 1
-          fi
-          if [ -z "${value}" ]; then
-            echo "::error::Could not resolve plugin version from inputs or GITHUB_REF_NAME"
             exit 1
           fi
           echo "value=${value}" >> "$GITHUB_OUTPUT"
@@ -136,8 +252,6 @@ jobs:
         run: |
           set -euo pipefail
           pnpm install --frozen-lockfile
-          pnpm test
-          pnpm typecheck
           pnpm pack
           tarball="${PLUGIN_NAME}-${VERSION}.tgz"
           test -f "${tarball}"
