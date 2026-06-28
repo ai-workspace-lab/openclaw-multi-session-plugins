@@ -3,3 +3,9 @@ coverage/
 *.tsbuildinfo
 repomix-output.xml
 openclaw-multi-session-plugins-*.tgz
+
+# Runtime release build artifacts (produced by the runtime-release workflow /
+# local packaging; published to GitHub Releases, not committed). The compiled
+# library under dist/ and dist/src/ stays tracked.
+dist/assets/
+dist/runtime/
