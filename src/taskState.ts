@@ -645,7 +645,7 @@ function resolveListSessionEntries(
 }
 
 function appStatusFromTaskStatus(status: string): string {
-  if (status === "succeeded") {
+  if (status === "succeeded" || status === "completed") {
     return "completed";
   }
   if (status === "failed" || status === "timed_out" || status === "cancelled" || status === "lost") {

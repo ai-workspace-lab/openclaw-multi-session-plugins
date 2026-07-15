@@ -466,7 +466,7 @@ function resolveListSessionEntries(api) {
         : undefined;
 }
 function appStatusFromTaskStatus(status) {
-    if (status === "succeeded") {
+    if (status === "succeeded" || status === "completed") {
         return "completed";
     }
     if (status === "failed" || status === "timed_out" || status === "cancelled" || status === "lost") {

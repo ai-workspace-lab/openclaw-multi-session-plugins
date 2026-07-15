@@ -172,6 +172,42 @@ describe("xworkmate task state mapping", () => {
     });
   });
 
+  it("treats a completed native task record as a completed app snapshot", async () => {
+    const { api } = createApiFixture({
+      "draft:1780658097668838-1:run-2": {
+        taskId: "task-2",
+        runId: "run-2",
+        status: "completed",
+      },
+    });
+    await recordXWorkmateSessionMapping({
+      api,
+      params: {
+        schemaVersion: 1,
+        appThreadKey: "draft:1780658097668838-1",
+        openclawSessionKey: "draft:1780658097668838-1",
+        runId: "run-2",
+        expectedArtifactDirs: ["reports/"],
+      },
+    });
+
+    const result = await getXWorkmateTaskSnapshot({
+      api,
+      params: {
+        appThreadKey: "draft:1780658097668838-1",
+        runId: "run-2",
+        includeArtifacts: false,
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      status: "completed",
+      taskStatus: "completed",
+      openclawSessionKey: "draft:1780658097668838-1",
+    });
+  });
+
   it("reports unknown evidence from task artifacts when native task record is unavailable", async () => {
     const workspaceDir = await createWorkspaceFixture();
     const appThreadKey = "draft:sample-task";
