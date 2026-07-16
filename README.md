@@ -1,5 +1,7 @@
 ![OpenClaw multi-session plugins promotional poster](./assets/product.png)
 
+[![License](https://img.shields.io/badge/license-MIT-2ea44f.svg)](./LICENSE) [![Node.js](https://img.shields.io/badge/Node.js-22%2B-339933.svg?logo=node.js&logoColor=white)](https://nodejs.org/) [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6.svg?logo=typescript&logoColor=white)](https://www.typescriptlang.org/) [![OpenClaw](https://img.shields.io/badge/platform-OpenClaw-7c3aed.svg)](https://github.com/openclaw/openclaw)
+
 # openclaw-multi-session-plugins
 
 OpenClaw plugin for per-session workspace isolation and scoped XWorkmate artifact handling.
