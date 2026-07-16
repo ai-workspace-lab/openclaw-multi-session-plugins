@@ -1,3 +1,5 @@
+![OpenClaw multi-session plugins promotional poster](./assets/product.png)
+
 # openclaw-multi-session-plugins
 
 OpenClaw plugin for per-session workspace isolation and scoped XWorkmate artifact handling.
