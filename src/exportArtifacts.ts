@@ -159,7 +159,6 @@ export async function collectAndSnapshotXWorkmateArtifacts(input: ExportInput): 
   const pluginConfig = input.pluginConfig ?? {};
   const runId = requiredString(params.runId, "runId required");
   const sessionKey = requiredString(params.openclawSessionKey, "openclawSessionKey required");
-  const sinceUnixMs = nonNegativeNumber(params.sinceUnixMs, 0);
   const maxFiles = positiveInteger(params.maxFiles, pluginConfig.snapshotMaxFiles, DEFAULT_MAX_FILES);
   const expectedArtifactScope = artifactScopeFor(sessionKey, runId);
   const requestedArtifactScope = optionalArtifactScope(params.artifactScope);
@@ -183,31 +182,27 @@ export async function collectAndSnapshotXWorkmateArtifacts(input: ExportInput): 
 
   const warnings: string[] = [];
   const copiedFiles: string[] = [];
-  for (const source of openClawSnapshotSources(params, pluginConfig)) {
+  const sourceFiles = await openClawSnapshotFiles(params, pluginConfig, warnings);
+  for (const sourceFile of sourceFiles) {
     if (copiedFiles.length >= maxFiles) {
       warnings.push(`snapshot file limit reached; skipped remaining files after ${maxFiles}`);
       break;
     }
-    const candidates = await collectSnapshotSourceCandidates({
-      source,
-      sinceUnixMs,
-      warnings,
-    });
-    for (const candidate of candidates) {
-      if (copiedFiles.length >= maxFiles) {
-        warnings.push(`snapshot file limit reached; skipped remaining files after ${maxFiles}`);
-        break;
-      }
-      const destinationRelativePath = safeSnapshotDestinationRelativePath(source.label, candidate.relativePath);
-      const destination = path.join(snapshotRoot, destinationRelativePath.split("/").join(path.sep));
-      if (!isWithinRoot(snapshotRoot, destination)) {
-        warnings.push(`skipped unsafe snapshot path ${destinationRelativePath}`);
-        continue;
-      }
-      await fs.mkdir(path.dirname(destination), { recursive: true });
-      await fs.copyFile(candidate.absolutePath, destination);
-      copiedFiles.push(`artifacts/${destinationRelativePath}`);
+    const destinationRelativePath = safeSnapshotDestinationRelativePath(
+      sourceFile.label,
+      path.basename(sourceFile.absolutePath),
+    );
+    const destination = path.join(snapshotRoot, destinationRelativePath.split("/").join(path.sep));
+    if (!isWithinRoot(snapshotRoot, destination)) {
+      warnings.push(`skipped unsafe snapshot path ${destinationRelativePath}`);
+      continue;
     }
+    await fs.mkdir(path.dirname(destination), { recursive: true });
+    await fs.copyFile(sourceFile.absolutePath, destination);
+    copiedFiles.push(`artifacts/${destinationRelativePath}`);
+  }
+  if (sourceFiles.length === 0) {
+    warnings.push("no task-referenced source files supplied; shared media roots were not scanned");
   }
 
   return {
@@ -700,6 +695,11 @@ type SnapshotSource = {
   root: string;
 };
 
+type SnapshotFile = {
+  label: string;
+  absolutePath: string;
+};
+
 async function collectSnapshotSourceCandidates(input: {
   source: SnapshotSource;
   sinceUnixMs: number;
@@ -1081,17 +1081,60 @@ function contentTypeForPath(relativePath: string): string {
   }
 }
 
-function openClawSnapshotSources(params: Record<string, unknown>, pluginConfig: Record<string, unknown>): SnapshotSource[] {
-  return [
-    {
-      label: "media",
-      root: expandUserPath(optionalString(pluginConfig.openClawMediaDir) || path.join("~", ".openclaw", "media")),
-    },
-    {
-      label: "tmp-openclaw",
-      root: expandUserPath(optionalString(pluginConfig.openClawTmpDir) || path.join(os.tmpdir(), "openclaw")),
-    },
+async function openClawSnapshotFiles(
+  params: Record<string, unknown>,
+  pluginConfig: Record<string, unknown>,
+  warnings: string[],
+): Promise<SnapshotFile[]> {
+  const configuredRoots = [
+    expandUserPath(optionalString(pluginConfig.openClawMediaDir) || path.join("~", ".openclaw", "media")),
+    expandUserPath(optionalString(pluginConfig.openClawTmpDir) || path.join(os.tmpdir(), "openclaw")),
   ];
+  const allowedRoots = await Promise.all(
+    configuredRoots.map(async (root) => {
+      try {
+        return await fs.realpath(root);
+      } catch {
+        return path.resolve(root);
+      }
+    }),
+  );
+  const values = Array.isArray(params.sourceFiles) ? params.sourceFiles : [];
+  const result: SnapshotFile[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const requested = optionalString(value);
+    if (!requested || !path.isAbsolute(requested)) {
+      warnings.push("skipped non-absolute snapshot source file");
+      continue;
+    }
+    let realPath = "";
+    try {
+      realPath = await fs.realpath(requested);
+    } catch (error) {
+      warnings.push(`cannot read referenced source file ${path.basename(requested)}: ${String(error)}`);
+      continue;
+    }
+    if (seen.has(realPath)) {
+      continue;
+    }
+    const rootIndex = allowedRoots.findIndex((root) => isWithinRoot(path.resolve(root), realPath));
+    if (rootIndex < 0) {
+      warnings.push(`skipped referenced source file outside managed staging roots: ${path.basename(realPath)}`);
+      continue;
+    }
+    const stat = await fs.stat(realPath);
+    if (!stat.isFile()) {
+      warnings.push(`skipped referenced source that is not a file: ${path.basename(realPath)}`);
+      continue;
+    }
+    seen.add(realPath);
+    result.push({
+      label: rootIndex === 0 ? "generated-media" : "generated-tmp",
+      absolutePath: realPath,
+    });
+  }
+  return result;
 }
 
 function safeSnapshotDestinationRelativePath(sourceLabel: string, sourceRelativePath: string): string {

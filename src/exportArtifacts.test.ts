@@ -304,6 +304,10 @@ describe("exportXWorkmateArtifacts", () => {
         runId: "run-1",
         artifactScope: prepared.artifactScope,
         sinceUnixMs: snapshotSinceUnixMs,
+        sourceFiles: [
+          path.join(mediaRoot, "browser", "current.png"),
+          path.join(tmpRoot, "renders", "final.mp4"),
+        ],
       },
       pluginConfig: {
         workspaceDir: root,
@@ -314,10 +318,10 @@ describe("exportXWorkmateArtifacts", () => {
 
     expect(snapshot.artifactScope).toBe(prepared.artifactScope);
     expect(snapshot.copiedFiles.sort()).toEqual([
-      "artifacts/media/browser/current.png",
-      "artifacts/tmp-openclaw/renders/final.mp4",
+      "artifacts/generated-media/current.png",
+      "artifacts/generated-tmp/final.mp4",
     ]);
-    await expect(fs.stat(path.join(prepared.artifactDirectory, "artifacts", "media", "browser", "old.png"))).rejects.toThrow();
+    await expect(fs.stat(path.join(prepared.artifactDirectory, "artifacts", "generated-media", "old.png"))).rejects.toThrow();
 
     const result = await exportXWorkmateArtifacts({
       params: {
@@ -330,8 +334,8 @@ describe("exportXWorkmateArtifacts", () => {
     });
 
     expect(result.artifacts.map((artifact) => artifact.relativePath).sort()).toEqual([
-      "artifacts/media/browser/current.png",
-      "artifacts/tmp-openclaw/renders/final.mp4",
+      "artifacts/generated-media/current.png",
+      "artifacts/generated-tmp/final.mp4",
     ]);
   });
 
