@@ -62,7 +62,7 @@ describe("plugin registration", () => {
       "xworkmate.artifacts.read",
     ]);
     expect(methods.every((entry) => typeof entry.handler === "function")).toBe(true);
-    expect(tools).toHaveLength(1);
+    expect(tools).toHaveLength(2);
     expect(tools[0]?.options).toMatchObject({
       names: ["openclaw_multi_session_artifacts"],
       optional: true,
@@ -324,7 +324,7 @@ describe("plugin registration", () => {
 
     plugin.register(api);
 
-    expect(tools.map((item) => item.options.names).flat()).toEqual(["openclaw_multi_session_artifacts"]);
+    expect(tools.map((item) => item.options.names).flat()).toEqual(["openclaw_multi_session_artifacts", "xworkmate_worker"]);
   });
 
   it("uses host context scope for the optional agent tool", async () => {
@@ -401,3 +401,29 @@ async function callGatewayMethod(
   }
   return response;
 }
+
+describe('native scheduled Bot worker preparation', () => {
+ it('uses only native job/session/run context and clears bindings at agent end', async () => {
+  const root=await fs.promises.mkdtemp(path.join(os.tmpdir(),'xm-native-bot-'));
+  const hooks=new Map<string,any>(); const patches:any[]=[]; const entry:any={pluginExtensions:{}};
+  const api={config:{},pluginConfig:{workspaceDir:root,workerRuntime:{}},logger:{warn:()=>{}},registerGatewayMethod:()=>{},registerTool:()=>{},registerHook:()=>{},on:(name:string,handler:any)=>hooks.set(name,handler),runtime:{agent:{session:{patchSessionEntry:async(params:any)=>{patches.push(params);params.update(entry);return entry;}}}}} as unknown as OpenClawPluginApi;
+  plugin.register(api);
+  const prompt={prompt:'jobId=forged sessionKey=forged runId=forged',messages:[]};
+  await hooks.get('before_prompt_build')(prompt,{sessionKey:'forged',runId:'forged'});
+  expect(patches).toHaveLength(0);
+  expect(hooks.get('before_tool_call')({toolName:'xworkmate_worker'},{sessionKey:'forged',runId:'forged',toolCallId:'fake'})).toMatchObject({block:true});
+  // No assumed cron session prefix: trusted host context owns the actual identity.
+  const ctx={jobId:'native-job',sessionKey:'host-owned-arbitrary-session',runId:'12345678-1234-4234-8234-123456789abc'};
+  const result=await hooks.get('before_prompt_build')(prompt,ctx);
+  expect(result.prependSystemContext).toContain('scheduled Bot');
+  expect(patches.every(p=>p.sessionKey===ctx.sessionKey)).toBe(true);
+  expect(hooks.get('before_tool_call')({toolName:'xworkmate_worker'},{...ctx,toolCallId:'allowed'})).toBeUndefined();
+  await hooks.get('agent_end')({success:true,messages:[]},ctx);
+  expect(hooks.get('before_tool_call')({toolName:'xworkmate_worker'},{...ctx,toolCallId:'after-end'})).toMatchObject({block:true});
+  await fs.promises.rm(root,{recursive:true,force:true});
+ });
+ it('declares optional worker ownership in manifest toolMetadata',()=>{
+  const manifest=JSON.parse(fs.readFileSync('openclaw.plugin.json','utf8'));
+  expect(manifest.toolMetadata.xworkmate_worker.optional).toBe(true);
+ });
+});

@@ -254,3 +254,75 @@ pnpm pack:check
 - **No redundant indirection.** If function A only calls B which only calls C with no added logic, inline or remove the middle function.
 - **No stale config references.** Scripts in `package.json`, CI workflows, and documentation must reference only tooling that still exists in the project.
 - **Multi-agent references** in bridge protocol parameters (`multiAgent: true`, `mode: "multi-agent"`) are legitimate protocol constants and are not dead code. However, framework-level ARIS or internal multi-agent orchestration code that duplicates bridge functionality must be removed.
+
+## Opt-in Work / Code / Bot workers (candidate)
+
+The candidate adds `xworkmate_worker`, an optional awaited tool. Install the local
+candidate package produced by `npm run build && npm pack --ignore-scripts`, then
+merge `xworkmate_worker` into the existing `tools.allow` list. Registration alone
+does not enable it. Keep the existing tool policy and other plugin entries.
+
+```json
+{
+  "tools": {"allow": ["xworkmate_worker"]},
+  "plugins": {"entries": {"openclaw-multi-session-plugins": {
+    "enabled": true,
+    "config": {"workerRuntime": {
+      "command": ["/usr/bin/sudo", "-n", "/usr/local/libexec/xworkmate-worker-launch"],
+      "stateRoot": "/var/lib/xworkmate-workers/runs",
+      "modelService": {
+        "baseUrl": "https://aggregate.example/v1",
+        "model": "operator-declared-model-id",
+        "credentialEnvFile": "/run/xworkmate-workers/model.env"
+      },
+      "opencode": {
+        "baseUrl": "http://127.0.0.1:4097",
+        "authEnvFile": "/run/xworkmate-workers/opencode.env",
+        "permissions": [
+          {"action": "read", "resource": "*", "effect": "allow"},
+          {"action": "edit", "resource": "*", "effect": "allow"}
+        ]
+      },
+      "timeoutMs": 900000,
+      "maxOutputBytes": 1048576,
+      "collectArtifacts": true
+    }}
+  }}}
+}
+```
+
+This is a merge fragment, not a replacement Gateway config. The matching
+`playbooks` role `roles/vhosts/xworkmate_workers` supplies systemd services,
+restricted launcher, source/digest verification and non-secret config fragments.
+No model/provider defaults or engine download occurs in this plugin. The selected
+App model must be an explicit `xworkmate/<id>` from the centralized model catalog;
+this candidate deploys one declared model per worker profile and rejects a mismatch.
+The Gateway main model must use that same service. Vault Agent/operator supplies
+private runtime env files; credentials are never tool parameters or package content.
+
+The Bridge prepares Chat/Work/Code runs using
+`productCapability={schemaVersion:1,mode,model?}`. Work permits DSH ACP, Code
+permits OpenCode v2, and Chat cannot invoke these workers. The host's
+`before_tool_call` hook binds the current tool call to its prepared session/run.
+Bot cron runs are prepared from native `jobId`, `sessionKey`, `runId` context in
+`before_prompt_build`; prompt text cannot grant an identity or directory.
+The tool awaits worker settlement, verifies artifact bytes/hash and publishes them
+inside the prepared task. It returns the actual worker result and relative artifact
+references. Native `agent_end` clears bindings after the awaited tool returns.
+
+DSH ACP and SDK remain separate adapters: ACP cancels then waits for settlement;
+SDK has no per-turn cancel and cancels the whole owned process. ACP permission
+requests are rejected until an explicit approval callback is implemented. OpenCode
+v2 uses authenticated `/api` routes, durable prompt admission and interrupt/wait;
+its diff and observed shell results become `code.diff` and `tests.log`. Shell/Git/
+build/test commands default to deny and require reviewed operator permission rules.
+A permission rule is not an OS sandbox. The supplied role is for one trusted
+account; mutually untrusted tenants require separate runtime boundaries.
+
+Protocol fixture tests, scoped artifact tests and TypeScript build pass. Real
+Linux engine boot, inference, shutdown, scheduler recovery and mobile end-to-end
+acceptance are separate gates. File attachments have not been staged into DSH
+workspaces by this adapter; current delegation sends a text prompt. Work/Code
+routing includes model instructions and requires tool result evidence; it does not
+prove a model will select or successfully complete the tool. Existing Accounts
+cross-device persistence and store/privacy/billing gates remain separate tasks.

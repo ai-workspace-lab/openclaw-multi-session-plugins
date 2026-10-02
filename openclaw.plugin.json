@@ -6,8 +6,14 @@
     "onStartup": true
   },
   "contracts": {
-    "tools": ["openclaw_multi_session_artifacts"],
-    "sessionScopedTools": ["openclaw_multi_session_artifacts"]
+    "tools": [
+      "openclaw_multi_session_artifacts",
+      "xworkmate_worker"
+    ],
+    "sessionScopedTools": [
+      "openclaw_multi_session_artifacts",
+      "xworkmate_worker"
+    ]
   },
   "configSchema": {
     "type": "object",
@@ -28,6 +34,96 @@
       "artifactRefSigningSecret": {
         "type": "string",
         "description": "Optional stable secret used to sign artifactRef values. Defaults to an in-process secret."
+      },
+      "workerRuntime": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "command",
+          "stateRoot",
+          "modelService",
+          "opencode"
+        ],
+        "properties": {
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "stateRoot": {
+            "type": "string"
+          },
+          "modelService": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "baseUrl",
+              "model",
+              "credentialEnvFile"
+            ],
+            "properties": {
+              "baseUrl": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "credentialEnvFile": {
+                "type": "string"
+              }
+            }
+          },
+          "opencode": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "baseUrl",
+              "authEnvFile"
+            ],
+            "properties": {
+              "baseUrl": {
+                "type": "string"
+              },
+              "authEnvFile": {
+                "type": "string"
+              },
+              "permissions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "action",
+                    "resource",
+                    "effect"
+                  ],
+                  "properties": {
+                    "action": {
+                      "type": "string"
+                    },
+                    "resource": {
+                      "type": "string"
+                    },
+                    "effect": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "timeoutMs": {
+            "type": "number"
+          },
+          "maxOutputBytes": {
+            "type": "number"
+          },
+          "collectArtifacts": {
+            "type": "boolean",
+            "description": "Export bounded deliverables via the controlled worker artifact contract."
+          }
+        }
       }
     }
   },
@@ -48,6 +144,11 @@
       "label": "Artifact Ref Signing Secret",
       "help": "Optional stable secret for plugin artifact references. Leave blank for process-local refs.",
       "sensitive": true
+    }
+  },
+  "toolMetadata": {
+    "xworkmate_worker": {
+      "optional": true
     }
   }
 }

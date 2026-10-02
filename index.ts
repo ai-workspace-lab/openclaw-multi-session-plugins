@@ -20,6 +20,8 @@ import {
   registerXWorkmateSessionExtension,
 } from "./src/taskState.js";
 
+import { createWorkerTool, normalizeProductCapability, type PreparedWorkerRun } from "./src/workerTool.js";
+
 type XWorkmateToolContext = {
   config?: unknown;
   workspaceDir?: string;
@@ -122,6 +124,41 @@ export default plugin;
 
 function register(api: OpenClawPluginApi) {
   registerXWorkmateSessionExtension(api);
+  const preparedWorkerRuns = new Map<string, PreparedWorkerRun>();
+  const toolBindings = new Map<string, PreparedWorkerRun>();
+  const preparingBotRuns = new Set<string>();
+  api.on("before_prompt_build", async (_event, ctx) => {
+    // Identity comes exclusively from the native host context, never prompt text.
+    const jobId = stringParam(ctx.jobId);
+    const sessionKey = stringParam(ctx.sessionKey);
+    const runId = stringParam(ctx.runId);
+    if (!api.pluginConfig?.workerRuntime || !jobId || !sessionKey || !runId) return;
+    const key = `${sessionKey}\0${runId}`;
+    if (!preparedWorkerRuns.has(key)) {
+      if (preparingBotRuns.has(key)) throw new Error("Bot worker run preparation is already in progress");
+      if (preparedWorkerRuns.size + preparingBotRuns.size >= 512) throw new Error("too many prepared worker runs");
+      preparingBotRuns.add(key);
+      try {
+        const params = { appThreadKey: `bot:${jobId}`, openclawSessionKey: sessionKey, runId,
+          ...(ctx.workspaceDir ? { workspaceDir: ctx.workspaceDir } : {}) };
+        const prepared = await prepareXWorkmateArtifacts({ params, config: api.config, pluginConfig: api.pluginConfig });
+        await recordXWorkmateSessionMapping({ api, params, artifactScope: prepared.artifactScope, source: "session_start" });
+        await recordXWorkmateTaskRunStarted({ api, openclawSessionKey: sessionKey, runId });
+        preparedWorkerRuns.set(key, { sessionKey, runId, artifactDirectory: prepared.artifactDirectory });
+      } finally { preparingBotRuns.delete(key); }
+    }
+    return { prependSystemContext: "This is a host-authorized scheduled Bot run. For delegated document/work tasks use xworkmate_worker with engine dsh-acp; for coding tasks use opencode-v2. SDK is only for explicit batch work and does not support interactive cancellation. Supply only engine and prompt; the host binds identity, workspace, unified model and permissions. Report only actual worker results and returned artifacts." };
+  });
+  api.on("before_tool_call", (event, ctx) => {
+    if (event.toolName !== "xworkmate_worker") return;
+    const key = `${ctx.sessionKey}\0${ctx.runId}`;
+    const prepared = preparedWorkerRuns.get(key);
+    if (!prepared || !ctx.toolCallId || toolBindings.size >= 256) {
+      return { block: true, blockReason: "XWorkmate worker requires a prepared host-owned task run" };
+    }
+    toolBindings.set(ctx.toolCallId, prepared);
+  });
+
 
   api.registerHook(
     "session_start",
@@ -159,6 +196,10 @@ function register(api: OpenClawPluginApi) {
         if (!openclawSessionKey || !runId) {
           return;
         }
+        preparedWorkerRuns.delete(`${openclawSessionKey}\0${runId}`);
+        for (const [id, binding] of toolBindings) {
+          if (binding.sessionKey === openclawSessionKey && binding.runId === runId) toolBindings.delete(id);
+        }
         await recordXWorkmateTaskRunTerminal({
           api,
           openclawSessionKey,
@@ -176,6 +217,7 @@ function register(api: OpenClawPluginApi) {
   api.registerGatewayMethod("xworkmate.session.prepare", async (opts: GatewayRequestHandlerOptions) => {
     try {
       const params = scopedGatewayParams(opts.params);
+      const capability = normalizeProductCapability(params.productCapability);
       const mapping = await recordXWorkmateSessionMapping({
         api,
         params,
@@ -189,6 +231,11 @@ function register(api: OpenClawPluginApi) {
         },
         config: api.config,
         pluginConfig: api.pluginConfig,
+      });
+      if (preparedWorkerRuns.size >= 512) throw new Error("too many prepared worker runs");
+      preparedWorkerRuns.set(`${mapping.openclawSessionKey}\0${stringParam(params.runId)}`, {
+        sessionKey: mapping.openclawSessionKey, runId: stringParam(params.runId),
+        artifactDirectory: payload.artifactDirectory, capability,
       });
       await recordXWorkmateTaskRunStarted({
         api,
@@ -291,6 +338,9 @@ function register(api: OpenClawPluginApi) {
   api.registerTool((ctx) => createXWorkmateArtifactsTool(api, ctx), {
     names: ["openclaw_multi_session_artifacts"],
     optional: true,
+  });
+  api.registerTool((ctx) => createWorkerTool(api, ctx, toolBindings), {
+    names: ["xworkmate_worker"], optional: true,
   });
 }
 
