@@ -2,6 +2,7 @@
  * Each invocation owns one disposable runtime/session. Permission requests are denied.
  * Cancellation stops execution; it never promises filesystem rollback.
  */
+import { settleDshUnit } from './settleDsh.js';
 import { openCodeFiles } from './opencodeFiles.js';
 import { exportWorkerFiles } from './exportFiles.js';
 import { spawn } from 'node:child_process';
@@ -191,6 +192,7 @@ async function dsh(input, options) {
     let sessionId = input.runId;
     let text = '';
     let promptPending = false;
+    let operationFailure;
     let cancelTimer;
     const abort = () => {
         if (input.engine === 'dsh-sdk')
@@ -277,11 +279,30 @@ async function dsh(input, options) {
         }
         return { engine: input.engine, sessionId, text };
     }
+    catch (error) {
+        operationFailure = error;
+        throw error;
+    }
     finally {
         input.signal?.removeEventListener('abort', abort);
         if (cancelTimer)
             clearTimeout(cancelTimer);
-        await peer.dispose();
+        const cleanupFailures = [];
+        try {
+            await peer.dispose();
+        }
+        catch (error) {
+            cleanupFailures.push(error);
+        }
+        // Even wrapper disposal failure must not bypass the root-owned unit stop.
+        try {
+            await settleDshUnit(input);
+        }
+        catch (error) {
+            cleanupFailures.push(error);
+        }
+        if (cleanupFailures.length)
+            throw new AggregateError([...(operationFailure ? [operationFailure] : []), ...cleanupFailures], 'DSH runtime cleanup could not verify complete shutdown');
     }
 }
 async function opencode(input, options) {

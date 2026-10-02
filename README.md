@@ -311,7 +311,10 @@ inside the prepared task. It returns the actual worker result and relative artif
 references. Native `agent_end` clears bindings after the awaited tool returns.
 
 DSH ACP and SDK remain separate adapters: ACP cancels then waits for settlement;
-SDK has no per-turn cancel and cancels the whole owned process. ACP permission
+SDK has no per-turn cancel and cancels the whole owned process. Every DSH exit
+independently invokes the root launcher cancel PROFILE UUID and requires confirmation
+that the owned systemd unit stopped before exporting artifacts. Wrapper exit alone
+is insufficient; cleanup failure fails the parent task. ACP permission
 requests are rejected until an explicit approval callback is implemented. OpenCode
 v2 uses authenticated `/api` routes, durable prompt admission and interrupt/wait;
 its diff and observed shell results become `code.diff` and `tests.log`. Shell/Git/

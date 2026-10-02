@@ -2,6 +2,7 @@
  * Each invocation owns one disposable runtime/session. Permission requests are denied.
  * Cancellation stops execution; it never promises filesystem rollback.
  */
+import { settleDshUnit } from './settleDsh.js';
 import { openCodeFiles } from './opencodeFiles.js';
 import { exportWorkerFiles } from './exportFiles.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -145,6 +146,7 @@ async function dsh(input: WorkerInput, options: ReturnType<typeof validateWorker
  let sessionId = input.runId;
  let text = '';
  let promptPending = false;
+ let operationFailure: unknown;
  let cancelTimer: ReturnType<typeof setTimeout> | undefined;
  const abort = () => {
   if (input.engine === 'dsh-sdk') peer.fail(new Error('DSH SDK has no mid-turn cancel; owned runtime terminated without rollback'));
@@ -208,7 +210,15 @@ async function dsh(input: WorkerInput, options: ReturnType<typeof validateWorker
    await peer.request('shutdown');
   }
   return { engine: input.engine, sessionId, text };
- } finally { input.signal?.removeEventListener('abort', abort); if (cancelTimer) clearTimeout(cancelTimer); await peer.dispose(); }
+ } catch (error) { operationFailure = error; throw error; }
+ finally {
+  input.signal?.removeEventListener('abort', abort); if (cancelTimer) clearTimeout(cancelTimer);
+  const cleanupFailures: unknown[] = [];
+  try { await peer.dispose(); } catch (error) { cleanupFailures.push(error); }
+  // Even wrapper disposal failure must not bypass the root-owned unit stop.
+  try { await settleDshUnit(input); } catch (error) { cleanupFailures.push(error); }
+  if (cleanupFailures.length) throw new AggregateError([...(operationFailure ? [operationFailure] : []), ...cleanupFailures], 'DSH runtime cleanup could not verify complete shutdown');
+ }
 }
 
 async function opencode(input: WorkerInput, options: ReturnType<typeof validateWorkerInput>): Promise<WorkerResult> {
