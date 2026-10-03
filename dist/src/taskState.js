@@ -290,6 +290,12 @@ async function upsertXWorkmateTaskRun(api, input) {
         update: (entry) => {
             const runs = readTaskRunsFromEntry(entry);
             const existing = runs[input.runId];
+            // A retry owns a new run identity. Late successful hooks must not erase
+            // a verified failure for this same session/run.
+            if (existing?.status === "failed" && input.status !== "failed") {
+                recorded = existing;
+                return {};
+            }
             recorded = compactObject({
                 schemaVersion: 1,
                 runId: input.runId,
