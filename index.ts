@@ -88,6 +88,34 @@ function stringParam(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+// agent_end carries the host transcript snapshot, including prior turns. Only
+// its final assistant outcome can adjudicate this turn; user text is never evidence.
+function agentEndOutcome(event: { success?: boolean; error?: unknown; messages?: unknown }) {
+  const messages = Array.isArray(event.messages) ? event.messages : [];
+  let lastUser = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message && typeof message === "object" && (message as Record<string, unknown>).role === "user") {
+      lastUser = index;
+      break;
+    }
+  }
+  const currentMessages = messages.slice(lastUser + 1);
+  const assistant = [...currentMessages].reverse().find(message =>
+    message && typeof message === "object" && (message as Record<string, unknown>).role === "assistant",
+  ) as Record<string, unknown> | undefined;
+  const stopReason = stringParam(assistant?.stopReason);
+  const assistantError = stringParam(assistant?.errorMessage);
+  const failed = event.success !== true || !!stringParam(event.error) ||
+    stopReason === "error" || stopReason === "aborted" || !!assistantError;
+  if (!failed) return { success: true, output: lastAssistantText(currentMessages) };
+  // Preserve actionable classification, never upstream raw text/headers/body.
+  const httpStatus = /^(?:Error:\s*)?([45]\d{2})(?:\s|$)/.exec(assistantError || stringParam(event.error))?.[1];
+  const error = httpStatus ? `UPSTREAM_MODEL_REQUEST_FAILED (HTTP ${httpStatus})` :
+    stopReason === "aborted" ? "AGENT_RUN_ABORTED" : "AGENT_RUN_FAILED";
+  return { success: false, error };
+}
+
 export function lastAssistantText(messages: unknown): string | undefined {
   if (!Array.isArray(messages)) return undefined;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -191,9 +219,10 @@ function register(api: OpenClawPluginApi) {
     "agent_end",
     async (event: any, ctx: any) => {
       try {
-        const openclawSessionKey = stringParam(ctx?.sessionKey ?? event?.sessionKey);
-        const runId = stringParam(event?.runId ?? ctx?.runId);
-        if (!openclawSessionKey || !runId) {
+        const openclawSessionKey = stringParam(ctx?.sessionKey);
+        const runId = stringParam(ctx?.runId);
+        const eventRunId = stringParam(event?.runId);
+        if (!openclawSessionKey || !runId || (eventRunId && eventRunId !== runId)) {
           return;
         }
         preparedWorkerRuns.delete(`${openclawSessionKey}\0${runId}`);
@@ -204,9 +233,7 @@ function register(api: OpenClawPluginApi) {
           api,
           openclawSessionKey,
           runId,
-          success: event?.success === true,
-          output: lastAssistantText(event?.messages),
-          error: event?.error,
+          ...agentEndOutcome(event ?? {}),
         });
       } catch (error) {
         api.logger?.warn?.(`xworkmate agent_end state capture failed: ${String(error)}`);

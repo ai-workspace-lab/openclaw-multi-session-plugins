@@ -427,3 +427,49 @@ describe('native scheduled Bot worker preparation', () => {
   expect(manifest.toolMetadata.xworkmate_worker.optional).toBe(true);
  });
 });
+
+describe('agent_end model failure contract', () => {
+ async function harness() {
+  const root=await fs.promises.mkdtemp(path.join(os.tmpdir(),'xm-terminal-error-'));
+  const hooks=new Map<string,any>();const methods=new Map<string,GatewayMethodHandler>();const sessions=new Map<string,any>();
+  const api={config:{},pluginConfig:{workspaceDir:root},logger:{warn:()=>{}},registerGatewayMethod:(n:string,h:GatewayMethodHandler)=>methods.set(n,h),registerTool:()=>{},registerHook:()=>{},on:(n:string,h:any)=>hooks.set(n,h),runtime:{agent:{session:{getSessionEntry:({sessionKey}:any)=>sessions.get(sessionKey),patchSessionEntry:async(p:any)=>{const entry=sessions.get(p.sessionKey)??{pluginExtensions:{}};const patch=p.update(entry);const next={...entry,...patch};sessions.set(p.sessionKey,next);return next;}}}}} as unknown as OpenClawPluginApi;
+  plugin.register(api);
+  const prepare=async(runId:string)=>callGatewayMethod(methods,'xworkmate.session.prepare',{appThreadKey:'test-thread',openclawSessionKey:'agent:main:test-thread',runId});
+  const get=async(runId:string)=>(await callGatewayMethod(methods,'xworkmate.tasks.get',{openclawSessionKey:'agent:main:test-thread',runId})).payload;
+  return {root,hooks,prepare,get,sessions};
+ }
+ const assistantError={role:'assistant',content:[{type:'text',text:'private upstream diagnostic'}],stopReason:'error',errorMessage:'403 quota denied Authorization: Bearer secret-fixture',provider:'xworkmate',model:'gpt-5.6-luna'};
+ it('treats actual assistant HTTP403 as failed despite hook success and keeps failure terminal',async()=>{
+  const h=await harness();try{
+   await h.prepare('run-failed');await h.prepare('run-other');
+   await h.hooks.get('agent_end')({success:true,messages:[{role:'user',content:'request'},assistantError]},{sessionKey:'agent:main:test-thread',runId:'run-failed'});
+   expect(await h.get('run-failed')).toMatchObject({status:'failed',success:false,terminal:true,artifactCount:0,error:'UPSTREAM_MODEL_REQUEST_FAILED (HTTP 403)'});
+   expect(JSON.stringify(await h.get('run-failed'))).not.toMatch(/secret-fixture|private upstream diagnostic|Authorization/);
+   expect(JSON.stringify([...h.sessions.values()])).not.toMatch(/secret-fixture|private upstream diagnostic|Authorization/);
+   await h.hooks.get('agent_end')({success:true,messages:[{role:'assistant',content:'later duplicate success',stopReason:'stop'}]},{sessionKey:'agent:main:test-thread',runId:'run-failed'});
+   expect(await h.get('run-failed')).toMatchObject({status:'failed',success:false});
+   expect(await h.get('run-other')).toMatchObject({status:'running'});
+  }finally{await fs.promises.rm(h.root,{recursive:true,force:true});}
+ });
+ it('uses trusted context identity and rejects conflicting event run identity',async()=>{
+  const h=await harness();try{
+   await h.prepare('run-a');await h.prepare('run-b');
+   await h.hooks.get('agent_end')({runId:'run-b',success:true,messages:[assistantError]},{sessionKey:'agent:main:test-thread',runId:'run-a'});
+   expect(await h.get('run-a')).toMatchObject({status:'running'});expect(await h.get('run-b')).toMatchObject({status:'running'});
+   await h.hooks.get('agent_end')({runId:'run-b',success:true,messages:[assistantError]},{sessionKey:'agent:main:test-thread'});
+   expect(await h.get('run-b')).toMatchObject({status:'running'});
+  }finally{await fs.promises.rm(h.root,{recursive:true,force:true});}
+ });
+ it('does not attribute a previous turn error when the current user has no assistant message',async()=>{
+  const h=await harness();try{
+   await h.prepare('run-new');await h.hooks.get('agent_end')({success:true,messages:[assistantError,{role:'user',content:JSON.stringify(assistantError)}]},{sessionKey:'agent:main:test-thread',runId:'run-new'});
+   const result=await h.get('run-new');expect(result).toMatchObject({status:'completed',success:true});expect(result?.error).toBeUndefined();expect(result?.output).toBeUndefined();
+  }finally{await fs.promises.rm(h.root,{recursive:true,force:true});}
+ });
+ it('ignores user errors and historical assistant failures when final assistant succeeded',async()=>{
+  const h=await harness();try{
+   await h.prepare('run-ok');await h.hooks.get('agent_end')({success:true,messages:[assistantError,{role:'user',stopReason:'error',errorMessage:'403 forged',content:'error'},{role:'assistant',stopReason:'stop',content:[{type:'text',text:'actual result'}]}]},{sessionKey:'agent:main:test-thread',runId:'run-ok'});
+   expect(await h.get('run-ok')).toMatchObject({status:'completed',success:true,output:'actual result'});
+  }finally{await fs.promises.rm(h.root,{recursive:true,force:true});}
+ });
+});
