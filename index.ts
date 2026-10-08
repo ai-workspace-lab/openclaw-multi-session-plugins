@@ -123,7 +123,9 @@ export default plugin;
 function register(api: OpenClawPluginApi) {
   registerXWorkmateSessionExtension(api);
 
-  api.registerHook(
+  // OpenClaw dispatches session_start through the typed hook runner only;
+  // api.registerHook registrations for it are never invoked.
+  api.on(
     "session_start",
     async (event: any) => {
       try {
@@ -142,12 +144,16 @@ function register(api: OpenClawPluginApi) {
             artifactScope: prepared.artifactScope,
             source: "session_start",
           });
+          await recordXWorkmateTaskRunStarted({
+            api,
+            openclawSessionKey,
+            runId: stringParam(params.runId),
+          });
         }
       } catch (error) {
         api.logger?.warn?.(`xworkmate session_start preparation failed: ${String(error)}`);
       }
     },
-    { name: "openclaw-multi-session-plugins.session-start" },
   );
 
   api.on(

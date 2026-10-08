@@ -73,7 +73,9 @@ const plugin = definePluginEntry({
 export default plugin;
 function register(api) {
     registerXWorkmateSessionExtension(api);
-    api.registerHook("session_start", async (event) => {
+    // OpenClaw dispatches session_start through the typed hook runner only;
+    // api.registerHook registrations for it are never invoked.
+    api.on("session_start", async (event) => {
         try {
             const params = scopedGatewayParams(event?.context ?? event);
             const openclawSessionKey = stringParam(params.openclawSessionKey);
@@ -90,12 +92,17 @@ function register(api) {
                     artifactScope: prepared.artifactScope,
                     source: "session_start",
                 });
+                await recordXWorkmateTaskRunStarted({
+                    api,
+                    openclawSessionKey,
+                    runId: stringParam(params.runId),
+                });
             }
         }
         catch (error) {
             api.logger?.warn?.(`xworkmate session_start preparation failed: ${String(error)}`);
         }
-    }, { name: "openclaw-multi-session-plugins.session-start" });
+    });
     api.on("agent_end", async (event, ctx) => {
         try {
             const openclawSessionKey = stringParam(ctx?.sessionKey ?? event?.sessionKey);

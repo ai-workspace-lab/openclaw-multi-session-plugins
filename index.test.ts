@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { describe, expect, it } from "vitest";
 import plugin, { lastAssistantText } from "./index.js";
 import { prepareXWorkmateArtifacts } from "./src/exportArtifacts.js";
@@ -144,13 +144,14 @@ describe("plugin registration", () => {
     expect(unprepared.payload?.warnings).toEqual(["artifact scope is not prepared for this task run"]);
   });
 
-  it("registers xworkmate task state against the native session extension and task runtime seams", async () => {
+  it("registers xworkmate task state against the session extension seam", async () => {
     const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "tmp-openclaw-task-state-"));
     const methods = new Map<string, GatewayMethodHandler>();
     const hooks = new Map<string, (event: unknown, ctx?: unknown) => Promise<void>>();
     const sessionExtensions: Array<Record<string, unknown>> = [];
     const sessionExtensionPatches: Array<Record<string, unknown>> = [];
     const detachedRuntimes: Array<Record<string, unknown>> = [];
+    const sessionEntries = new Map<string, any>();
     const api = {
       config: {}, logger: { warn: console.warn },
       pluginConfig: { workspaceDir: root },
@@ -160,33 +161,14 @@ describe("plugin registration", () => {
             registerSessionExtension: (extension: Record<string, unknown>) => {
               sessionExtensions.push(extension);
             },
+            getSessionEntry: ({ sessionKey }: { sessionKey: string }) => sessionEntries.get(sessionKey),
             patchSessionEntry: async (patch: any) => {
               sessionExtensionPatches.push(patch);
-              if (patch.update) patch.update({ pluginExtensions: {} });
-              return {};
+              const current = sessionEntries.get(patch.sessionKey) ?? patch.fallbackEntry ?? { pluginExtensions: {} };
+              const next = { ...current, ...(patch.update ? patch.update(current) : {}) };
+              sessionEntries.set(patch.sessionKey, next);
+              return next;
             },
-          },
-        },
-        tasks: {
-          runs: {
-            bindSession: ({ sessionKey }: { sessionKey: string }) => ({
-              resolve: (token: string) =>
-                sessionKey === "draft:1780636411666238-3" && token === "turn-1"
-                  ? {
-                      taskId: "native-task",
-                      runtime: "acp",
-                      requesterSessionKey: sessionKey,
-                      ownerKey: "draft-1780636411666238-3",
-                      scopeKind: "session",
-                      runId: token,
-                      task: "native",
-                      status: "running",
-                      deliveryStatus: "pending",
-                      notifyPolicy: "state_changes",
-                      createdAt: 1,
-                    }
-                  : undefined,
-            }),
           },
         },
       },
@@ -244,7 +226,7 @@ describe("plugin registration", () => {
     });
     await fs.promises.mkdir(path.join(root, "reports"), { recursive: true });
     await fs.promises.writeFile(path.join(root, "reports", "final.md"), "final");
-    expect(sessionExtensionPatches).toHaveLength(1);
+    expect(sessionExtensionPatches).toHaveLength(2);
     expect(sessionExtensionPatches[0]).toMatchObject({
       sessionKey: "draft:1780636411666238-3",
       preserveActivity: true,
@@ -266,7 +248,7 @@ describe("plugin registration", () => {
       openclawSessionKey: "draft:1780636411666238-3",
       artifactCount: 1,
     });
-    expect(snapshot.payload?.task).toMatchObject({ taskId: "native-task", status: "running" });
+    expect(snapshot.payload?.task).toMatchObject({ runId: "turn-1", status: "running", source: "xworkmate_run_state" });
     expect(snapshot.payload?.artifacts).toMatchObject([{ relativePath: "reports/final.md" }]);
 
     await hooks.get("agent_end")?.(
