@@ -71,13 +71,6 @@ type PatchSessionEntry = (params: {
 
 type GetSessionEntry = (params: { sessionKey: string }) => SessionEntry | undefined;
 
-type BoundTaskRunsRuntime = {
-  get?: (taskId: string) => unknown;
-  list?: () => unknown[];
-  findLatest?: () => unknown;
-  resolve?: (token: string) => unknown;
-};
-
 export function registerXWorkmateSessionExtension(api: OpenClawPluginApi) {
   const registerExtension =
     api.session?.state?.registerSessionExtension ?? (api as any).registerSessionExtension;
@@ -277,129 +270,91 @@ export async function getXWorkmateTaskSnapshot(input: {
 
   const runId = optionalString(params.runId);
   const taskId = optionalString(params.taskId);
-  const task = resolveNativeTask(input.api, {
-    openclawSessionKey,
-    runId,
-    taskId,
-  });
+  // OpenClaw 2026.9 removed the host Tasks runtime (api.runtime.tasks), so
+  // the run state this plugin records on session prepare / agent_end is the
+  // only task record; artifacts are the remaining evidence.
   const includeArtifacts = params.includeArtifacts !== false;
-  if (!task) {
-    const recordedRun = runId
-      ? readXWorkmateTaskRun(input.api, openclawSessionKey, runId)
-      : undefined;
-    const exported = includeArtifacts && runId
-      ? await exportArtifactsForTaskLookup(input, params, openclawSessionKey, runId, mapping)
-      : undefined;
-    if (recordedRun) {
-      return {
-        success: recordedRun.status === "running" ? true : recordedRun.success,
-        status: recordedRun.status,
-        taskStatus: recordedRun.status,
-        terminal: recordedRun.status !== "running",
-        terminalSource: recordedRun.status === "running" ? "session_prepare" : "agent_end",
-        mode: "gateway-chat",
-        mapping,
-        appThreadKey: mapping?.appThreadKey ?? appThreadKey,
-        openclawSessionKey,
-        runId,
-        taskId: taskId || runId,
-        task: {
-          taskId: taskId || runId,
-          runId,
-          status: recordedRun.status,
-          success: recordedRun.success,
-          source: "xworkmate_run_state",
-          startedAt: recordedRun.startedAt,
-          updatedAt: recordedRun.updatedAt,
-          completedAt: recordedRun.completedAt,
-          error: recordedRun.error,
-        },
-        output: recordedRun.output,
-        resultSummary: recordedRun.output,
-        error: recordedRun.error,
-        message: recordedRun.output ?? recordedRun.error,
-        expectedArtifactDirs: mapping?.expectedArtifactDirs ?? [],
-        artifactScope: exported?.artifactScope,
-        remoteWorkingDirectory: exported?.remoteWorkingDirectory,
-        remoteWorkspaceRefKind: exported?.remoteWorkspaceRefKind,
-        scopeKind: exported?.scopeKind,
-        artifacts: exported?.artifacts ?? [],
-        constraintSatisfied: exported?.constraintSatisfied,
-        missingRequiredExtensions: exported?.missingRequiredExtensions,
-        warnings: exported?.warnings ?? [],
-        artifactCount: exported?.artifacts.length ?? 0,
-      };
-    }
-    if (exported?.artifacts.length) {
-      return {
-        success: false,
-        status: "unknown",
-        taskStatus: "unknown",
-        evidence: "artifacts_present",
-        mode: "gateway-chat",
-        mapping,
-        appThreadKey: mapping?.appThreadKey ?? appThreadKey,
-        openclawSessionKey,
-        runId,
-        taskId: taskId || runId,
-        task: {
-          taskId: taskId || runId,
-          runId,
-          status: "unknown",
-          source: "artifact_fallback",
-        },
-        expectedArtifactDirs: mapping?.expectedArtifactDirs ?? [],
-        artifactScope: exported.artifactScope,
-        remoteWorkingDirectory: exported.remoteWorkingDirectory,
-        remoteWorkspaceRefKind: exported.remoteWorkspaceRefKind,
-        scopeKind: exported.scopeKind,
-        artifacts: exported.artifacts,
-        constraintSatisfied: exported.constraintSatisfied,
-        missingRequiredExtensions: exported.missingRequiredExtensions,
-        warnings: [
-          ...exported.warnings,
-          `Native OpenClaw task record was unavailable for ${openclawSessionKey}; artifacts are present but task status is unknown.`,
-        ],
-        artifactCount: exported.artifacts.length,
-      };
-    }
-    const code: XWorkmateTaskLookupErrorCode = runId || taskId ? "no_native_task_record" : "task_not_found";
-    return lookupError(code, `No native OpenClaw task record found for ${openclawSessionKey}`, mapping);
-  }
-
-  const taskStatus = optionalString((task as any).status) || "running";
-  const exported = includeArtifacts
-    ? await exportArtifactsForTaskLookup(
-        input,
-        params,
-        openclawSessionKey,
-        runId || optionalString((task as any).runId) || optionalString((task as any).taskId),
-        mapping,
-      )
+  const recordedRun = runId
+    ? readXWorkmateTaskRun(input.api, openclawSessionKey, runId)
     : undefined;
-
-  return {
-    success: true,
-    status: appStatusFromTaskStatus(taskStatus),
-    taskStatus,
-    mode: "gateway-chat",
-    mapping,
-    appThreadKey: mapping?.appThreadKey ?? appThreadKey,
-    openclawSessionKey,
-    runId: runId || optionalString((task as any).runId),
-    taskId: taskId || optionalString((task as any).taskId),
-    task,
-    expectedArtifactDirs: mapping?.expectedArtifactDirs ?? [],
-    artifactScope: exported?.artifactScope,
-    remoteWorkingDirectory: exported?.remoteWorkingDirectory,
-    remoteWorkspaceRefKind: exported?.remoteWorkspaceRefKind,
-    scopeKind: exported?.scopeKind,
-    artifacts: exported?.artifacts ?? [],
-    constraintSatisfied: exported?.constraintSatisfied,
-    missingRequiredExtensions: exported?.missingRequiredExtensions,
-    warnings: exported?.warnings ?? [],
-    artifactCount: exported?.artifacts.length ?? 0,
-  };
+  const exported = includeArtifacts && runId
+    ? await exportArtifactsForTaskLookup(input, params, openclawSessionKey, runId, mapping)
+    : undefined;
+  if (recordedRun) {
+    return {
+      success: recordedRun.status === "running" ? true : recordedRun.success,
+      status: recordedRun.status,
+      taskStatus: recordedRun.status,
+      terminal: recordedRun.status !== "running",
+      terminalSource: recordedRun.status === "running" ? "session_prepare" : "agent_end",
+      mode: "gateway-chat",
+      mapping,
+      appThreadKey: mapping?.appThreadKey ?? appThreadKey,
+      openclawSessionKey,
+      runId,
+      taskId: taskId || runId,
+      task: {
+        taskId: taskId || runId,
+        runId,
+        status: recordedRun.status,
+        success: recordedRun.success,
+        source: "xworkmate_run_state",
+        startedAt: recordedRun.startedAt,
+        updatedAt: recordedRun.updatedAt,
+        completedAt: recordedRun.completedAt,
+        error: recordedRun.error,
+      },
+      output: recordedRun.output,
+      resultSummary: recordedRun.output,
+      error: recordedRun.error,
+      message: recordedRun.output ?? recordedRun.error,
+      expectedArtifactDirs: mapping?.expectedArtifactDirs ?? [],
+      artifactScope: exported?.artifactScope,
+      remoteWorkingDirectory: exported?.remoteWorkingDirectory,
+      remoteWorkspaceRefKind: exported?.remoteWorkspaceRefKind,
+      scopeKind: exported?.scopeKind,
+      artifacts: exported?.artifacts ?? [],
+      constraintSatisfied: exported?.constraintSatisfied,
+      missingRequiredExtensions: exported?.missingRequiredExtensions,
+      warnings: exported?.warnings ?? [],
+      artifactCount: exported?.artifacts.length ?? 0,
+    };
+  }
+  if (exported?.artifacts.length) {
+    return {
+      success: false,
+      status: "unknown",
+      taskStatus: "unknown",
+      evidence: "artifacts_present",
+      mode: "gateway-chat",
+      mapping,
+      appThreadKey: mapping?.appThreadKey ?? appThreadKey,
+      openclawSessionKey,
+      runId,
+      taskId: taskId || runId,
+      task: {
+        taskId: taskId || runId,
+        runId,
+        status: "unknown",
+        source: "artifact_fallback",
+      },
+      expectedArtifactDirs: mapping?.expectedArtifactDirs ?? [],
+      artifactScope: exported.artifactScope,
+      remoteWorkingDirectory: exported.remoteWorkingDirectory,
+      remoteWorkspaceRefKind: exported.remoteWorkspaceRefKind,
+      scopeKind: exported.scopeKind,
+      artifacts: exported.artifacts,
+      constraintSatisfied: exported.constraintSatisfied,
+      missingRequiredExtensions: exported.missingRequiredExtensions,
+      warnings: [
+        ...exported.warnings,
+        `No XWorkmate task record for ${openclawSessionKey}; artifacts are present but task status is unknown.`,
+      ],
+      artifactCount: exported.artifacts.length,
+    };
+  }
+  const code: XWorkmateTaskLookupErrorCode = runId || taskId ? "no_native_task_record" : "task_not_found";
+  return lookupError(code, `No XWorkmate task record found for ${openclawSessionKey}`, mapping);
 }
 
 async function upsertXWorkmateTaskRun(
@@ -539,28 +494,6 @@ async function exportArtifactsForTaskLookup(
   });
 }
 
-function resolveNativeTask(
-  api: OpenClawPluginApi,
-  input: { openclawSessionKey: string; runId?: string; taskId?: string },
-): Record<string, unknown> | undefined {
-  try {
-    const bound = api.runtime?.tasks?.runs?.bindSession?.({ sessionKey: input.openclawSessionKey }) as
-      | BoundTaskRunsRuntime
-      | undefined;
-    if (!bound) {
-      return undefined;
-    }
-    const lookup = input.taskId || input.runId || "";
-    const resolved = lookup ? bound.resolve?.(lookup) || bound.get?.(lookup) : bound.findLatest?.();
-    return asRecord(resolved);
-  } catch (error) {
-    api.logger?.warn?.(
-      `xworkmate native task lookup failed: sessionKey=${input.openclawSessionKey} error=${String(error)}`,
-    );
-    return undefined;
-  }
-}
-
 function lookupError(
   code: XWorkmateTaskLookupErrorCode,
   message: string,
@@ -642,16 +575,6 @@ function resolveListSessionEntries(
   return typeof candidate === "function"
     ? (candidate as () => Array<{ sessionKey: string; entry: SessionEntry }>)
     : undefined;
-}
-
-function appStatusFromTaskStatus(status: string): string {
-  if (status === "succeeded" || status === "completed") {
-    return "completed";
-  }
-  if (status === "failed" || status === "timed_out" || status === "cancelled" || status === "lost") {
-    return "failed";
-  }
-  return "running";
 }
 
 function parseMappingSource(value: unknown): XWorkmateSessionMappingSource {

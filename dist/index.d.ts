@@ -1,9 +1,15 @@
 export declare function lastAssistantText(messages: unknown): string | undefined;
-declare const plugin: {
+declare const plugin: Omit<{
     id: string;
     name: string;
     description: string;
-    configSchema: import("openclaw/plugin-sdk/core").OpenClawPluginConfigSchema;
+    kind?: import("openclaw/plugin-sdk/core").OpenClawPluginDefinition["kind"];
+    configSchema?: import("openclaw/plugin-sdk/core").OpenClawPluginConfigSchema | (() => import("openclaw/plugin-sdk/core").OpenClawPluginConfigSchema);
+    reload?: import("openclaw/plugin-sdk/core").OpenClawPluginDefinition["reload"];
+    nodeHostCommands?: import("openclaw/plugin-sdk/core").OpenClawPluginDefinition["nodeHostCommands"];
+    securityAuditCollectors?: import("openclaw/plugin-sdk/core").OpenClawPluginDefinition["securityAuditCollectors"];
     register: NonNullable<import("openclaw/plugin-sdk/core").OpenClawPluginDefinition["register"]>;
-} & Pick<import("openclaw/plugin-sdk/core").OpenClawPluginDefinition, "kind" | "reload" | "nodeHostCommands" | "securityAuditCollectors">;
+}, "configSchema"> & {
+    configSchema: import("openclaw/plugin-sdk/core").OpenClawPluginConfigSchema;
+};
 export default plugin;

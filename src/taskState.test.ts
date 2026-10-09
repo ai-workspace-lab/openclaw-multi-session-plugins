@@ -12,7 +12,7 @@ import {
 
 const XWORKMATE_PLUGIN_ID = "openclaw-multi-session-plugins";
 
-function createApiFixture(tasks: Record<string, unknown> = {}, pluginConfig: Record<string, unknown> = {}) {
+function createApiFixture(pluginConfig: Record<string, unknown> = {}) {
   const sessions = new Map<string, any>();
   const api = {
     config: {},
@@ -46,15 +46,6 @@ function createApiFixture(tasks: Record<string, unknown> = {}, pluginConfig: Rec
             }
             return sessions.get(sessionKey) ?? null;
           },
-        },
-      },
-      tasks: {
-        runs: {
-          bindSession: ({ sessionKey }: { sessionKey: string }) => ({
-            resolve: (token: string) => tasks[`${sessionKey}:${token}`],
-            get: (token: string) => tasks[`${sessionKey}:${token}`],
-            findLatest: () => tasks[`${sessionKey}:latest`],
-          }),
         },
       },
     },
@@ -136,14 +127,8 @@ describe("xworkmate task state mapping", () => {
     ).rejects.toThrow("conflict");
   });
 
-  it("resolves appThreadKey through pluginExtensions before querying native tasks", async () => {
-    const { api } = createApiFixture({
-      "draft:1780658097668838-1:run-1": {
-        taskId: "task-1",
-        runId: "run-1",
-        status: "succeeded",
-      },
-    });
+  it("resolves appThreadKey through pluginExtensions to the recorded run", async () => {
+    const { api } = createApiFixture();
     await recordXWorkmateSessionMapping({
       api,
       params: {
@@ -154,6 +139,13 @@ describe("xworkmate task state mapping", () => {
         expectedArtifactDirs: ["artifacts/"],
       },
     });
+    await recordXWorkmateTaskRunTerminal({
+      api,
+      openclawSessionKey: "draft:1780658097668838-1",
+      runId: "run-1",
+      success: true,
+      output: "done",
+    });
 
     const result = await getXWorkmateTaskSnapshot({
       api,
@@ -167,19 +159,14 @@ describe("xworkmate task state mapping", () => {
     expect(result).toMatchObject({
       success: true,
       status: "completed",
+      terminal: true,
       openclawSessionKey: "draft:1780658097668838-1",
       expectedArtifactDirs: ["artifacts/"],
     });
   });
 
-  it("treats a completed native task record as a completed app snapshot", async () => {
-    const { api } = createApiFixture({
-      "draft:1780658097668838-1:run-2": {
-        taskId: "task-2",
-        runId: "run-2",
-        status: "completed",
-      },
-    });
+  it("reports a started run as running and not terminal", async () => {
+    const { api } = createApiFixture();
     await recordXWorkmateSessionMapping({
       api,
       params: {
@@ -187,8 +174,12 @@ describe("xworkmate task state mapping", () => {
         appThreadKey: "draft:1780658097668838-1",
         openclawSessionKey: "draft:1780658097668838-1",
         runId: "run-2",
-        expectedArtifactDirs: ["reports/"],
       },
+    });
+    await recordXWorkmateTaskRunStarted({
+      api,
+      openclawSessionKey: "draft:1780658097668838-1",
+      runId: "run-2",
     });
 
     const result = await getXWorkmateTaskSnapshot({
@@ -202,13 +193,13 @@ describe("xworkmate task state mapping", () => {
 
     expect(result).toMatchObject({
       success: true,
-      status: "completed",
-      taskStatus: "completed",
-      openclawSessionKey: "draft:1780658097668838-1",
+      status: "running",
+      terminal: false,
+      task: { source: "xworkmate_run_state" },
     });
   });
 
-  it("reports unknown evidence from task artifacts when native task record is unavailable", async () => {
+  it("reports unknown evidence from task artifacts when no run state was recorded", async () => {
     const workspaceDir = await createWorkspaceFixture();
     const appThreadKey = "draft:sample-task";
     const openclawSessionKey = "agent:main:draft:sample-task";
@@ -217,7 +208,7 @@ describe("xworkmate task state mapping", () => {
     await fs.mkdir(artifactDir, { recursive: true });
     await fs.writeFile(path.join(artifactDir, "series.config.json"), "{}\n", "utf8");
 
-    const { api } = createApiFixture({}, { workspaceDir });
+    const { api } = createApiFixture({ workspaceDir });
     await recordXWorkmateSessionMapping({
       api,
       params: {
@@ -259,9 +250,9 @@ describe("xworkmate task state mapping", () => {
     expect((result.warnings as string[]).some((entry) => entry.includes("task status is unknown"))).toBe(true);
   });
 
-  it("returns no_native_task_record when neither native task record nor task artifacts exist", async () => {
+  it("returns no_native_task_record when neither run state nor task artifacts exist", async () => {
     const workspaceDir = await createWorkspaceFixture();
-    const { api } = createApiFixture({}, { workspaceDir });
+    const { api } = createApiFixture({ workspaceDir });
     await recordXWorkmateSessionMapping({
       api,
       params: {
@@ -290,9 +281,9 @@ describe("xworkmate task state mapping", () => {
     });
   });
 
-  it("returns a durable failed agent terminal state when the native task record is absent", async () => {
+  it("returns a durable failed agent terminal state from recorded run state", async () => {
     const workspaceDir = await createWorkspaceFixture();
-    const { api } = createApiFixture({}, { workspaceDir });
+    const { api } = createApiFixture({ workspaceDir });
     await recordXWorkmateSessionMapping({
       api,
       params: {
@@ -380,13 +371,7 @@ describe("xworkmate task state mapping", () => {
   });
 
   it("does not accept legacy sessionKey as a task lookup alias", async () => {
-    const { api } = createApiFixture({
-      "draft:legacy:run-1": {
-        taskId: "task-legacy",
-        runId: "run-1",
-        status: "succeeded",
-      },
-    });
+    const { api } = createApiFixture();
 
     const result = await getXWorkmateTaskSnapshot({
       api,
@@ -404,13 +389,7 @@ describe("xworkmate task state mapping", () => {
   });
 
   it("can read mapping by appThreadKey from pluginExtensions", async () => {
-    const { api } = createApiFixture({
-      "draft:lookup:run-1": {
-        taskId: "task-1",
-        runId: "run-1",
-        status: "succeeded",
-      },
-    });
+    const { api } = createApiFixture();
     await recordXWorkmateSessionMapping({
       api,
       params: {
@@ -420,6 +399,7 @@ describe("xworkmate task state mapping", () => {
         runId: "run-1",
       },
     });
+    await recordXWorkmateTaskRunStarted({ api, openclawSessionKey: "draft:lookup", runId: "run-1" });
 
     await expect(
       getXWorkmateTaskSnapshot({

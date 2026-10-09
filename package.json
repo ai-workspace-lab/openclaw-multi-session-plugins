@@ -1,6 +1,6 @@
 {
   "name": "openclaw-multi-session-plugins",
-  "version": "2026.6.2",
+  "version": "2026.9.9",
   "description": "OpenClaw plugin for per-session workspace isolation and scoped XWorkmate artifact handling",
   "type": "module",
   "license": "MIT",
@@ -23,7 +23,7 @@
     "url": "https://github.com/x-evor/openclaw-multi-session-plugins/issues"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=24.16.0 <25 || >=26.1.0"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -46,7 +46,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
-    "openclaw": "2026.5.28",
+    "openclaw": "2026.9.9",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
   },
